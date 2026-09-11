@@ -83,6 +83,8 @@ Streak is derived (a SQL function over `results` for a user), not stored; cheap 
 - Circle membership is checked through a `security definer` function, never by a policy that queries its own table (Postgres rejects that as infinite recursion).
 - `events` accepts only the 15 declared names plus `circle_join_attempt`, capped at 60 rows per user per minute through the `track` RPC; direct inserts are not allowed.
 - `users.tz` is validated against `pg_timezone_names` so a bad value can never break `streak` or the push scheduler.
+- Turning off "Let contacts find me" is a database trigger, not an app promise: the update deletes the user's stored contact hashes and recomputes every match edge involving them in the same transaction, so they drop off friends' boards immediately.
+- Contact sync is capped three ways: 5,000 hashes per request, 20,000 per day, one full sync and 12 requests per hour. A request with no hashes returns the current friend list without touching the graph.
 
 ### Daily unlock, timezone-aware
 
@@ -213,7 +215,7 @@ Verdict: build custom. Game Center cannot express the product's core idea (the c
 ## 5. Cheat resistance (proportionate to v1)
 
 - Results are submitted as an attempt log (each try's permutation and elapsed time); the server recomputes feedback, tries, solve state, and score with `supabase/functions/_shared/lineup.ts`, which is a behavioural twin of the Swift engine and is held in lock-step by a shared golden-vector fixture that both test suites read. The log is rejected if it is unsolved with fewer than three tries, repeats an order, moves a locked tile, has non-monotonic or absurd elapsed times, or continues after a solve.
-- Elapsed time is measured server-side as `submitted_at - puzzle_fetched_at` and clamped to the client's value if higher, so a clock-shifted client cannot claim 3 seconds.
+- Elapsed time has a server-side floor. The client calls `start_puzzle(date)` at reveal, which records the first start in `puzzle_starts`. On submit, the stored elapsed is `max(client, server − 3 s grace)`, so a client cannot claim 3 seconds for a 90-second solve, while an honest client that reports more time than the server saw is taken at its word. If no start row exists (played offline), the client value is stored and `results.elapsed_source` says so.
 - One result per user per date, enforced by primary key.
 - The puzzle payload carries labels and the correct order (required for offline play and instant green/yellow feedback) but not values or reveal facts; those are readable only for dates the user has already played. Someone proxying their own traffic to read the order is accepted, same as asking a friend.
 - Everything else (screenshot-and-ask-a-friend) is accepted. The leaderboard is among people who will call you out at dinner.

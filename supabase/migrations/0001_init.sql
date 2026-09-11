@@ -67,6 +67,16 @@ create table public.matches (
 );
 create index matches_b_idx on public.matches (user_b) where mutual;
 
+-- One row per contact sync request; `match-contacts` enforces the per-day hash
+-- budget and the one-full-sync-per-hour rule from it. Service role only.
+create table public.contact_sync_log (
+  user_id  uuid not null references public.users(id) on delete cascade,
+  at       timestamptz not null default now(),
+  hashes   int not null check (hashes >= 0),
+  is_full  boolean not null default false
+);
+create index contact_sync_log_user_at_idx on public.contact_sync_log (user_id, at desc);
+
 -- ---------------------------------------------------------------------------
 -- Circles
 -- ---------------------------------------------------------------------------
@@ -137,11 +147,21 @@ create table public.results (
   elapsed_ms    int not null check (elapsed_ms >= 0),
   score         int not null check (score between 0 and 1000),
   tz            text not null,
-  fetched_at    timestamptz,                    -- when the client fetched the puzzle (server clock)
+  elapsed_source text not null default 'client' check (elapsed_source in ('server', 'client')),
   submitted_at  timestamptz not null default now(),
   primary key (user_id, puzzle_date)
 );
 create index results_date_score_idx on public.results (puzzle_date, score desc, elapsed_ms asc);
+
+-- First reveal of a puzzle per user, recorded by `start_puzzle`. `submit-result`
+-- uses it to clamp the client's elapsed time. No client policies: only the RPC
+-- (security definer) writes it and only the service role reads it.
+create table public.puzzle_starts (
+  user_id      uuid not null references public.users(id) on delete cascade,
+  puzzle_date  date not null references public.puzzles(date),
+  started_at   timestamptz not null default now(),
+  primary key (user_id, puzzle_date)
+);
 
 create table public.reactions (
   from_user    uuid not null references public.users(id) on delete cascade,
@@ -254,6 +274,63 @@ $$;
 
 -- Breaks the infinite recursion in circle_members_select (a policy on
 -- circle_members that queried circle_members from inside itself, 42P17).
+-- Rebuilds every `matches` row involving `owner` from `contact_hashes`.
+-- Called by `match-contacts` (service role) after each sync and by the
+-- `users_discoverable_changed` trigger. Never callable by clients.
+--   have_them   = users whose phone_hmac is in owner's contact list (and who are discoverable)
+--   they_have_me = users whose contact list contains owner's phone_hmac (only if owner is discoverable)
+--   mutual = in both. Rows involving owner that are in neither set are deleted.
+create function public.recompute_matches(owner uuid)
+returns void language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  my_hmac text;
+  me_discoverable boolean;
+begin
+  select phone_hmac, discoverable into my_hmac, me_discoverable from users where id = owner;
+  if my_hmac is null then return; end if;
+
+  create temp table _edges on commit drop as
+  with have_them as (
+    select u.id from contact_hashes ch
+    join users u on u.phone_hmac = ch.contact_hmac
+    where ch.owner_id = owner and u.discoverable and u.id <> owner
+  ),
+  they_have_me as (
+    select ch.owner_id as id from contact_hashes ch
+    where ch.contact_hmac = my_hmac and me_discoverable and ch.owner_id <> owner
+  )
+  select coalesce(h.id, t.id) as other,
+         (h.id is not null and t.id is not null) as mutual
+  from have_them h full outer join they_have_me t on t.id = h.id;
+
+  delete from matches m
+  where (m.user_a = owner or m.user_b = owner)
+    and not exists (select 1 from _edges e
+                    where e.other = case when m.user_a = owner then m.user_b else m.user_a end);
+
+  insert into matches (user_a, user_b, mutual, updated_at)
+  select least(owner, e.other), greatest(owner, e.other), e.mutual, now() from _edges e
+  on conflict (user_a, user_b) do update
+    set mutual = excluded.mutual, updated_at = now()
+    where matches.mutual is distinct from excluded.mutual;
+
+  drop table _edges;
+end;
+$$;
+
+-- Aggregates the caller's sync-log rows since `since` in SQL instead of pulling
+-- every row into the edge function and summing in JS. Used by match-contacts to
+-- enforce the per-hour request/full-sync caps and the daily hash cap. Service
+-- role only.
+create function public.sync_usage(u uuid, since timestamptz)
+returns table (full_syncs int, hashes int, requests int)
+language sql stable security definer set search_path = public, pg_temp as $$
+  select coalesce(count(*) filter (where is_full), 0)::int,
+         coalesce(sum(hashes), 0)::int,
+         count(*)::int
+  from contact_sync_log where user_id = u and at >= since;
+$$;
+
 create function public.is_circle_member(c uuid)
 returns boolean language sql stable security definer set search_path = public, pg_temp as $$
   select exists (select 1 from circle_members where circle_id = c and user_id = auth.uid());
@@ -357,12 +434,14 @@ alter table public.users            enable row level security;
 alter table public.devices          enable row level security;
 alter table public.contact_hashes   enable row level security;   -- no client policies: service role only
 alter table public.matches          enable row level security;
+alter table public.contact_sync_log enable row level security;   -- no client policies
 alter table public.circles          enable row level security;
 alter table public.circle_members   enable row level security;
 alter table public.lists            enable row level security;
 alter table public.list_items       enable row level security;
 alter table public.puzzles          enable row level security;
 alter table public.results          enable row level security;
+alter table public.puzzle_starts    enable row level security;   -- no client policies
 alter table public.reactions        enable row level security;
 alter table public.taunts           enable row level security;
 alter table public.notification_log enable row level security;   -- service role only
@@ -475,6 +554,51 @@ end;
 $$;
 
 -- track: rate-limited event logging (60/minute/user, silently dropped past that).
+-- Returns the puzzle for `d` in client shape and records the caller's first
+-- reveal in `puzzle_starts`. Same date window and approval rule as the puzzles
+-- RLS policy, re-checked here because the function is security definer.
+-- `items` are in presentation (shuffled) order; `correctOrder` is the answer.
+create function public.start_puzzle(d date)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  p puzzles%rowtype;
+  l lists%rowtype;
+  items jsonb;
+begin
+  if auth.uid() is null then raise exception 'not signed in' using errcode = '28000'; end if;
+  if d < ((now() - interval '14 hours') at time zone 'UTC')::date
+     or d > ((now() + interval '14 hours') at time zone 'UTC')::date then
+    raise exception 'date outside window' using errcode = 'P0006';
+  end if;
+  select * into p from puzzles where date = d and status = 'approved';
+  if p.date is null then raise exception 'no puzzle' using errcode = 'P0002'; end if;
+  select * into l from lists where id = p.list_id;
+  if l.id is null then raise exception 'bad list' using errcode = 'P0002'; end if;
+
+  -- puzzle_starts FKs users(id); a caller who finished OTP but never called
+  -- `register` has no users row yet, so skip the insert rather than 23503.
+  if exists (select 1 from users where id = auth.uid()) then
+    insert into puzzle_starts (user_id, puzzle_date) values (auth.uid(), d) on conflict do nothing;
+  end if;
+
+  select jsonb_agg(jsonb_build_object('id', li.id, 'label', li.label) order by ord.n)
+    into items
+  from unnest(p.item_ids) with ordinality as ord(id, n)
+  join list_items li on li.id = ord.id;
+  if items is null or jsonb_array_length(items) <> 5 then
+    raise exception 'bad puzzle items' using errcode = 'P0002';
+  end if;
+
+  return jsonb_build_object(
+    'date', to_char(p.date, 'YYYY-MM-DD'),
+    'number', p.number,
+    'prompt', l.prompt_template,
+    'direction', l.direction,
+    'items', items,
+    'correctOrder', to_jsonb(p.correct_order));
+end;
+$$;
+
 create function public.track(p_name text, p_props jsonb default '{}')
 returns void language plpgsql security definer set search_path = public, pg_temp as $$
 begin
@@ -508,6 +632,25 @@ $$;
 create trigger circles_owner_joins after insert on public.circles
   for each row execute function public.circle_owner_joins();
 
+-- Keeps the graph honest the instant a client flips `discoverable`, instead of
+-- leaving stale `mutual = true` rows until some other user's next sync happens
+-- to recompute them. Turning discovery off also deletes the owner's uploaded
+-- contact hashes (they opted out of being matchable by them too).
+create function public.users_discoverable_changed()
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if new.discoverable is distinct from old.discoverable then
+    if not new.discoverable then
+      delete from contact_hashes where owner_id = new.id;
+    end if;
+    perform public.recompute_matches(new.id);
+  end if;
+  return new;
+end;
+$$;
+create trigger users_discoverable_changed after update of discoverable on public.users
+  for each row execute function public.users_discoverable_changed();
+
 -- ---------------------------------------------------------------------------
 -- Grants
 -- ---------------------------------------------------------------------------
@@ -519,6 +662,17 @@ revoke all on function public.can_see(uuid, uuid)  from public, anon, authentica
 revoke all on function public.streak(uuid)          from public, anon, authenticated;
 revoke all on function public.friend_ids(uuid)      from public, anon, authenticated;
 revoke all on function public.circle_owner_joins()  from public, anon, authenticated;
+revoke all on function public.recompute_matches(uuid) from public, anon, authenticated;
+revoke all on function public.users_discoverable_changed() from public, anon, authenticated;
+revoke all on function public.sync_usage(uuid, timestamptz) from public, anon, authenticated;
+revoke all on function public.start_puzzle(date)    from public, anon;
+grant execute on function public.start_puzzle(date) to authenticated;
+-- The revokes above also strip the default PUBLIC EXECUTE grant these functions
+-- got on creation, so the edge functions (which call them as service_role) need
+-- it re-granted explicitly.
+grant execute on function public.recompute_matches(uuid), public.streak(uuid),
+                          public.start_puzzle(date) to service_role;
+grant execute on function public.sync_usage(uuid, timestamptz) to service_role;
 revoke all on function public.board(text, uuid, text, date) from public, anon;
 revoke all on function public.join_circle(text)     from public, anon;
 revoke all on function public.track(text, jsonb)    from public, anon;

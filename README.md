@@ -8,11 +8,13 @@ A daily puzzle app where the leaderboard is made of the contacts in your phone w
 |---|---|---|
 | `docs/` | Product brief, v1 spec, wireframes, architecture, launch plan | — |
 | `packages/LineupEngine/` | Pure Swift state machine for the daily puzzle: rules, scoring, share text. No UI, no I/O. | `swift test` |
-| `supabase/functions/_shared/lineup.ts` | Server-side twin of the engine; recomputes a result from an untrusted attempt log | `deno test --allow-read lineup_test.ts` |
+| `supabase/functions/_shared/lineup.ts` | Server-side twin of the engine; recomputes a result from an untrusted attempt log | `cd supabase/functions && deno test --allow-read` |
+| `supabase/functions/{register,submit-result,match-contacts}/` | Edge functions. Each is a pure `handler.ts` over a Store interface, a Supabase-backed `store.ts`, and a thin `index.ts`. Tests use in-memory fakes from `_shared/test_fakes.ts`. | same command |
+| `supabase/functions/_shared/hashing.ts` | Phone canonicalisation and the sha256 → peppered HMAC transform for contact matching | same command |
 | `packages/LineupEngine/Tests/LineupEngineTests/Fixtures/golden.json` | Golden vectors read by both test suites so the twins cannot drift | both of the above |
 | `supabase/migrations/0001_init.sql` | Schema, row-level security, board / streak / circle RPCs | `cd supabase/tests && npm install && npm test` (runs the migration in in-process Postgres with an `auth` shim and a non-superuser role) |
 
-Not built yet: the iOS app target, the `match-contacts` / `submit-result` / `send-pushes` edge functions, the puzzle generator and admin page, and the landing site. Build order is in the architecture doc, section 7.
+Not built yet: the iOS app target, the `send-pushes` and `delete-account` edge functions, the puzzle generator and admin page, and the landing site. Edge functions have not yet been deployed or exercised against a real Supabase project; `CONTACT_PEPPER` must be set as a function secret before `register` or `match-contacts` will run. Build order is in the architecture doc, section 7.
 
 ## Docs
 

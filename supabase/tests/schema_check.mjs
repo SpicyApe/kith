@@ -17,6 +17,11 @@ await db.exec(`
   -- ("to authenticated", "revoke ... from anon"), so they must exist first.
   create role anon nologin;
   create role authenticated nologin;
+  -- The migration grants EXECUTE on a few functions to service_role (the role
+  -- edge functions connect as); it must exist before the migration runs. pglite
+  -- applies the migration as its own superuser regardless of this role's
+  -- privileges, so creating it here is enough.
+  create role service_role nologin;
 `);
 await db.exec(sql);
 console.log("migration: OK");
@@ -196,5 +201,225 @@ try {
 }
 if (anonBoardRows > 0) throw new Error("RLS: anon must not see the everyone board");
 await db.exec(`reset role`);
+
+// ---------------------------------------------------------------------------
+// recompute_matches (superuser / service-role context)
+// ---------------------------------------------------------------------------
+// Seed contact_hashes: A has B and C; B has A; C does not have A; D has A (but
+// A does not have D). contact_hmac values must equal the target's phone_hmac
+// from the users seed above (ha/hb/hc/hd).
+await db.exec(`
+  insert into public.contact_hashes (owner_id, contact_hmac) values
+    ('${A}', 'hb'), ('${A}', 'hc'),
+    ('${B}', 'ha'),
+    ('${D}', 'ha');
+`);
+await db.query(`select public.recompute_matches('${A}')`);
+const mAB1 = await db.query(
+  `select mutual from public.matches where user_a = least('${A}'::uuid, '${B}'::uuid) and user_b = greatest('${A}'::uuid, '${B}'::uuid)`);
+if (mAB1.rows.length !== 1 || mAB1.rows[0].mutual !== true) {
+  throw new Error(`recompute_matches: expected A-B mutual=true, got ${JSON.stringify(mAB1.rows)}`);
+}
+const mAC1 = await db.query(
+  `select mutual from public.matches where user_a = least('${A}'::uuid, '${C}'::uuid) and user_b = greatest('${A}'::uuid, '${C}'::uuid)`);
+if (mAC1.rows.length !== 1 || mAC1.rows[0].mutual !== false) {
+  throw new Error(`recompute_matches: expected A-C mutual=false, got ${JSON.stringify(mAC1.rows)}`);
+}
+const mAD1 = await db.query(
+  `select mutual from public.matches where user_a = least('${A}'::uuid, '${D}'::uuid) and user_b = greatest('${A}'::uuid, '${D}'::uuid)`);
+if (mAD1.rows.length !== 1 || mAD1.rows[0].mutual !== false) {
+  throw new Error(`recompute_matches: expected A-D mutual=false, got ${JSON.stringify(mAD1.rows)}`);
+}
+console.log("recompute_matches: A-B mutual, A-C and A-D one-sided - OK");
+
+// C opts out of discoverability: the A-C row should disappear on recompute.
+await db.exec(`update public.users set discoverable = false where id = '${C}'`);
+await db.query(`select public.recompute_matches('${A}')`);
+const mAC2 = await db.query(
+  `select 1 from public.matches where user_a = least('${A}'::uuid, '${C}'::uuid) and user_b = greatest('${A}'::uuid, '${C}'::uuid)`);
+if (mAC2.rows.length !== 0) throw new Error("recompute_matches: A-C row should be deleted once C is not discoverable");
+console.log("recompute_matches: A-C row deleted after C goes non-discoverable - OK");
+
+// B removes A from their contacts: A-B should flip to not mutual.
+await db.exec(`delete from public.contact_hashes where owner_id = '${B}' and contact_hmac = 'ha'`);
+await db.query(`select public.recompute_matches('${B}')`);
+const mAB2 = await db.query(
+  `select mutual from public.matches where user_a = least('${A}'::uuid, '${B}'::uuid) and user_b = greatest('${A}'::uuid, '${B}'::uuid)`);
+if (mAB2.rows.length !== 1 || mAB2.rows[0].mutual !== false) {
+  throw new Error(`recompute_matches: expected A-B mutual=false after B drops A, got ${JSON.stringify(mAB2.rows)}`);
+}
+console.log("recompute_matches: A-B mutual=false after B drops A - OK");
+
+// ---------------------------------------------------------------------------
+// users_discoverable_changed trigger
+// ---------------------------------------------------------------------------
+// Restore B -> A so A-B is mutual again, giving the discoverable toggle below
+// something to actually flip.
+await db.exec(`insert into public.contact_hashes (owner_id, contact_hmac) values ('${B}', 'ha')`);
+await db.query(`select public.recompute_matches('${B}')`);
+const mAB3 = await db.query(
+  `select mutual from public.matches where user_a = least('${A}'::uuid, '${B}'::uuid) and user_b = greatest('${A}'::uuid, '${B}'::uuid)`);
+if (mAB3.rows.length !== 1 || mAB3.rows[0].mutual !== true) {
+  throw new Error(`discoverable trigger setup: expected A-B mutual=true before the toggle, got ${JSON.stringify(mAB3.rows)}`);
+}
+
+// A turns discoverability off: the trigger must delete A's contact_hashes and
+// immediately recompute. With A's hashes gone and A no longer discoverable,
+// recompute_matches finds no edge in either direction and drops the A-B row
+// entirely (the same "no edge left" behaviour as the C-opts-out case above),
+// so A-B is no longer mutual right away, instead of waiting for B's next sync.
+await db.query(`update public.users set discoverable = false where id = '${A}'`);
+const mAB4 = await db.query(
+  `select mutual from public.matches where user_a = least('${A}'::uuid, '${B}'::uuid) and user_b = greatest('${A}'::uuid, '${B}'::uuid)`);
+if (mAB4.rows.length !== 0) {
+  throw new Error(`users_discoverable_changed: expected the A-B row to be gone (no longer mutual) after A goes non-discoverable, got ${JSON.stringify(mAB4.rows)}`);
+}
+const aHashesAfterOptOut = await db.query(`select count(*)::int as n from public.contact_hashes where owner_id = '${A}'`);
+if (aHashesAfterOptOut.rows[0].n !== 0) throw new Error("users_discoverable_changed: A's contact_hashes should be deleted after opting out");
+console.log("users_discoverable_changed: A-B mutual=false and A's contact_hashes deleted after A opts out - OK");
+
+// A opts back in, re-uploads contacts, and recomputes: mutual should return.
+await db.exec(`update public.users set discoverable = true where id = '${A}'`);
+await db.exec(`insert into public.contact_hashes (owner_id, contact_hmac) values ('${A}', 'hb'), ('${A}', 'hc')`);
+await db.query(`select public.recompute_matches('${A}')`);
+const mAB5 = await db.query(
+  `select mutual from public.matches where user_a = least('${A}'::uuid, '${B}'::uuid) and user_b = greatest('${A}'::uuid, '${B}'::uuid)`);
+if (mAB5.rows.length !== 1 || mAB5.rows[0].mutual !== true) {
+  throw new Error(`users_discoverable_changed: expected A-B mutual=true again after A opts back in, got ${JSON.stringify(mAB5.rows)}`);
+}
+console.log("users_discoverable_changed: A-B mutual=true again after A opts back in - OK");
+
+// ---------------------------------------------------------------------------
+// start_puzzle
+// ---------------------------------------------------------------------------
+await db.exec(`set role app; set app.uid = '${B}';`);
+const started = await db.query(`select public.start_puzzle('${today}') as p`);
+const puzzleJson = started.rows[0].p;
+if (puzzleJson.number !== 142) throw new Error(`start_puzzle: expected number 142, got ${JSON.stringify(puzzleJson.number)}`);
+if (!Array.isArray(puzzleJson.items) || puzzleJson.items.length !== 5) {
+  throw new Error(`start_puzzle: expected 5 items, got ${JSON.stringify(puzzleJson.items)}`);
+}
+const gotItemIds = puzzleJson.items.map((i) => i.id);
+if (JSON.stringify(gotItemIds) !== JSON.stringify([1, 2, 3, 4, 5])) {
+  throw new Error(`start_puzzle: items not in item_ids order: ${JSON.stringify(gotItemIds)}`);
+}
+const gotLabels = puzzleJson.items.map((i) => i.label);
+if (JSON.stringify(gotLabels) !== JSON.stringify(["Bicycle", "Telephone", "Light bulb", "Zipper", "Microwave"])) {
+  throw new Error(`start_puzzle: item labels wrong: ${JSON.stringify(gotLabels)}`);
+}
+if (JSON.stringify(puzzleJson.correctOrder) !== JSON.stringify([1, 2, 3, 4, 5])) {
+  throw new Error(`start_puzzle: correctOrder wrong: ${JSON.stringify(puzzleJson.correctOrder)}`);
+}
+for (const it of puzzleJson.items) {
+  if (Object.hasOwn(it, "value") || Object.hasOwn(it, "fact")) {
+    throw new Error(`start_puzzle: items must not expose value/fact, got ${JSON.stringify(it)}`);
+  }
+}
+console.log("start_puzzle: number/items/correctOrder, no value/fact leak - OK");
+
+await db.exec(`reset role`);
+const starts1 = await db.query(`select started_at from public.puzzle_starts where user_id = '${B}' and puzzle_date = '${today}'`);
+if (starts1.rows.length !== 1) throw new Error(`start_puzzle: expected one puzzle_starts row for B/today, got ${starts1.rows.length}`);
+const startedAt1 = new Date(starts1.rows[0].started_at).getTime();
+
+// Calling again must not touch started_at or insert a second row.
+await db.exec(`set role app; set app.uid = '${B}';`);
+await db.query(`select public.start_puzzle('${today}') as p`);
+await db.exec(`reset role`);
+const starts2 = await db.query(`select started_at from public.puzzle_starts where user_id = '${B}' and puzzle_date = '${today}'`);
+if (starts2.rows.length !== 1) throw new Error(`start_puzzle: expected still exactly one puzzle_starts row, got ${starts2.rows.length}`);
+if (new Date(starts2.rows[0].started_at).getTime() !== startedAt1) throw new Error("start_puzzle: started_at changed on repeat call");
+console.log("start_puzzle: repeat call is idempotent (started_at unchanged, one row) - OK");
+
+// puzzle_starts already has a row for B (from start_puzzle above); seed a
+// contact_sync_log row too so the invisibility check below isn't vacuous.
+await db.exec(`insert into public.contact_sync_log (user_id, hashes, is_full) values ('${B}', 3, false)`);
+
+// Neither table has client policies: app must see 0 rows, and a delete must
+// silently match 0 rows rather than erroring or actually removing anything.
+await db.exec(`set role app; set app.uid = '${B}';`);
+const puzzleStartsHidden = await db.query(`select * from public.puzzle_starts`);
+if (puzzleStartsHidden.rows.length !== 0) throw new Error("RLS: puzzle_starts must be invisible to clients");
+const syncLogHidden = await db.query(`select * from public.contact_sync_log`);
+if (syncLogHidden.rows.length !== 0) throw new Error("RLS: contact_sync_log must be invisible to clients");
+const delPuzzleStarts = await db.query(`delete from public.puzzle_starts`);
+const deletedCount = delPuzzleStarts.affectedRows ?? delPuzzleStarts.rows.length;
+if (deletedCount !== 0) throw new Error(`RLS: delete from puzzle_starts should affect 0 rows for app, got ${deletedCount}`);
+let recomputeAsAppThrew = false;
+try {
+  await db.query(`select public.recompute_matches('${A}')`);
+} catch (e) {
+  recomputeAsAppThrew = true;
+  console.log("recompute_matches as app correctly denied:", e.message.split("\n")[0]);
+}
+if (!recomputeAsAppThrew) throw new Error("RLS: recompute_matches must not be callable by app");
+await db.exec(`reset role`);
+console.log("RLS: puzzle_starts/contact_sync_log invisible to app; delete matched 0 rows - OK");
+
+// Confirm app's delete above really didn't remove anything.
+const starts1b = await db.query(`select started_at from public.puzzle_starts where user_id = '${B}' and puzzle_date = '${today}'`);
+if (starts1b.rows.length !== 1) throw new Error("app's no-op delete on puzzle_starts should not have removed the row");
+
+// Outside the +/-14h window it must throw, even for a registered caller.
+await db.exec(`set role app; set app.uid = '${B}';`);
+let outsideWindowThrew = false;
+try {
+  await db.query(`select public.start_puzzle('2000-01-01') as p`);
+} catch (e) {
+  outsideWindowThrew = true;
+  console.log("start_puzzle outside window correctly threw:", e.message.split("\n")[0]);
+}
+if (!outsideWindowThrew) throw new Error("start_puzzle: expected a throw for a date outside the +/-14h window");
+await db.exec(`reset role`);
+
+// A puzzle that exists for an in-window date but is still 'pending' (not yet
+// approved) must be treated the same as no puzzle at all.
+const win = await db.query(`
+  select ((now() - interval '14 hours') at time zone 'UTC')::date::text as lo,
+         ((now() + interval '14 hours') at time zone 'UTC')::date::text as hi`);
+const usedDates = new Set([twoAgo, yest, today]);
+const pendingDate = [win.rows[0].lo, win.rows[0].hi].find((d) => !usedDates.has(d));
+if (!pendingDate) throw new Error("could not find a free in-window date for the pending-puzzle test");
+await db.exec(`
+  insert into public.puzzles (date, number, list_id, item_ids, correct_order, status, difficulty) values
+    ('${pendingDate}', 999, 1, '{1,2,3,4,5}', '{1,2,3,4,5}', 'pending', 'easy');
+`);
+await db.exec(`set role app; set app.uid = '${B}';`);
+let pendingThrew = false;
+try {
+  await db.query(`select public.start_puzzle('${pendingDate}') as p`);
+} catch (e) {
+  pendingThrew = true;
+  console.log("start_puzzle for a pending (unapproved) puzzle correctly threw:", e.message.split("\n")[0]);
+}
+if (!pendingThrew) throw new Error("start_puzzle: expected a throw for a pending (not yet approved) puzzle");
+await db.exec(`reset role`);
+
+// The anon role has no EXECUTE grant on start_puzzle at all.
+await db.exec(`reset role`);
+await db.exec(`set role anon; set app.uid = '';`);
+let anonStartThrew = false;
+try {
+  await db.query(`select public.start_puzzle('${today}') as p`);
+} catch (e) {
+  anonStartThrew = true;
+  console.log("start_puzzle as anon correctly threw:", e.message.split("\n")[0]);
+}
+if (!anonStartThrew) throw new Error("start_puzzle: expected a throw when called as anon");
+await db.exec(`reset role`);
+
+// ---------------------------------------------------------------------------
+// service_role grants
+// ---------------------------------------------------------------------------
+// The blanket `revoke all ... from public` in the migration's Grants section
+// strips the default PUBLIC EXECUTE grant; edge functions call these RPCs as
+// service_role, so they must have been explicitly re-granted execute.
+await db.exec(`set role service_role;`);
+await db.query(`select public.recompute_matches('${A}')`);
+await db.query(`select public.streak('${A}')`);
+const su = await db.query(`select * from public.sync_usage('${A}', now() - interval '1 day')`);
+console.log("service_role sync_usage:", su.rows[0]);
+await db.exec(`reset role`);
+console.log("service_role: recompute_matches/streak/sync_usage all callable - OK");
 
 console.log("\nALL SCHEMA CHECKS PASSED");
