@@ -4,7 +4,7 @@
 // call) is covered here.
 
 import { assertEquals } from "jsr:@std/assert";
-import { jsonResponse, parseJsonBody, verifyCaller } from "./serve.ts";
+import { constantTimeEqual, jsonResponse, parseJsonBody, verifyCaller } from "./serve.ts";
 
 // ---------------------------------------------------------------------------
 // parseJsonBody
@@ -47,4 +47,20 @@ Deno.test("jsonResponse - sets the status and a JSON content-type", () => {
 Deno.test("verifyCaller - no Authorization header returns null", async () => {
   const req = new Request("http://x");
   assertEquals(await verifyCaller(req, "", ""), null);
+});
+
+// ---------------------------------------------------------------------------
+// constantTimeEqual
+// ---------------------------------------------------------------------------
+
+Deno.test("constantTimeEqual - equal strings are equal", async () => {
+  assertEquals(await constantTimeEqual("secret-token", "secret-token"), true);
+});
+
+Deno.test("constantTimeEqual - different strings of the same length are not equal", async () => {
+  assertEquals(await constantTimeEqual("secret-token", "secret-tokeN"), false);
+});
+
+Deno.test("constantTimeEqual - strings of different length are not equal", async () => {
+  assertEquals(await constantTimeEqual("short", "a-much-longer-string"), false);
 });

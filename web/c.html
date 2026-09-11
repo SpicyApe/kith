@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kith — Join a circle</title>
+<meta name="description" content="You've been invited to a circle on Kith.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="site">
+    <a class="wordmark" href="/">K<span>i</span>th</a>
+  </header>
+
+  <main class="center">
+    <h1>You've been invited to a circle on Kith.</h1>
+    <p class="code-chip" id="circle-code">Code: KITH-????</p>
+
+    <div class="actions" style="justify-content:center">
+      <button class="button secondary" id="copy-button" type="button">Copy code</button>
+      <!-- replace idPLACEHOLDER with the real App Store id -->
+      <a class="appstore-badge" id="appstore-link" href="https://apps.apple.com/app/idPLACEHOLDER">Get the app</a>
+    </div>
+
+    <p><small>If you have Kith installed, this link should have opened it directly. Otherwise, install the app and enter the code on the Circles tab.</small></p>
+  </main>
+
+  <footer class="site">
+    <span>&copy; 2026 Kith</span>
+    <a href="/privacy.html">Privacy</a>
+    <a href="/terms.html">Terms</a>
+  </footer>
+</div>
+
+<script>
+  // The invite link is /c/<code>. Cloudflare Pages rewrites /c/* to
+  // this file with status 200, so the address bar still shows the
+  // original path — read the code from location.pathname.
+  (function () {
+    var parts = location.pathname.split("/").filter(Boolean); // ["c", "7F3Q"]
+    var code = parts[1] || "";
+    var valid = /^[A-Z0-9]{4,12}$/i.test(code);
+
+    var el = document.getElementById("circle-code");
+    var fullCode = valid ? "KITH-" + code.toUpperCase() : "KITH-????";
+    el.textContent = "Code: " + fullCode;
+
+    if (valid) {
+      document.cookie = "kith_circle=" + encodeURIComponent(code) + "; Max-Age=2592000; Path=/; SameSite=Lax; Secure";
+    }
+
+    document.getElementById("copy-button").addEventListener("click", function () {
+      var button = this;
+      navigator.clipboard.writeText(fullCode).then(function () {
+        var original = button.textContent;
+        button.textContent = "Copied!";
+        setTimeout(function () { button.textContent = original; }, 1500);
+      });
+    });
+  })();
+</script>
+</body>
+</html>

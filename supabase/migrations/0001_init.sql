@@ -31,7 +31,19 @@ create table public.users (
   -- (users_invite_code_key) on collision.
   invite_code   text not null unique default upper(substr(encode(gen_random_bytes(8), 'hex'), 1, 10)),
   created_at    timestamptz not null default now(),
-  last_open_at  timestamptz not null default now()
+  last_open_at  timestamptz not null default now(),
+  -- Notification preferences (docs/02 §7). Times are local to `tz`.
+  push_daily    boolean not null default true,
+  push_daily_at time not null default '08:00',
+  push_streak   boolean not null default true,
+  push_passed   boolean not null default true
+);
+
+-- Content authors. Membership grants the admin policies below (review queue).
+-- Rows are inserted by hand with the service role; never by a client.
+create table public.admins (
+  user_id     uuid primary key references public.users(id) on delete cascade,
+  created_at  timestamptz not null default now()
 );
 
 create table public.devices (
@@ -131,6 +143,7 @@ create table public.puzzles (
   correct_order  int[] not null check (cardinality(correct_order) = 5),
   status         text not null default 'pending' check (status in ('pending', 'approved')),
   difficulty     text not null check (difficulty in ('easy', 'medium', 'hard')),
+  seed           bigint not null default 0,        -- generator seed; reseed bumps it
   created_at     timestamptz not null default now()
 );
 
@@ -331,6 +344,144 @@ language sql stable security definer set search_path = public, pg_temp as $$
   from contact_sync_log where user_id = u and at >= since;
 $$;
 
+create function public.is_admin()
+returns boolean language sql stable security definer set search_path = public, pg_temp as $$
+  select exists (select 1 from admins where user_id = auth.uid());
+$$;
+
+-- Account deletion (service role, called by `delete-account`). Circles the
+-- user owns pass to their oldest other member, or are deleted when empty; the
+-- user is then dropped from any taunt's `hidden_by` array they appear in; and
+-- finally the auth user itself is deleted here, in SQL, which cascades
+-- through `users` (users.id references auth.users(id) on delete cascade) and
+-- from there through results, reactions, taunts, contact_hashes, matches,
+-- devices, circle_members, puzzle_starts, and the contact/notification logs.
+-- The edge function's step 2 (`auth.admin.deleteUser`) is now only a
+-- best-effort follow-up against the auth service's own records; its
+-- "User not found" outcome is treated as success since this function already
+-- did the real deletion.
+create function public.delete_account(u uuid)
+returns void language plpgsql security definer set search_path = public, pg_temp as $$
+declare c record; heir uuid;
+begin
+  for c in select id from circles where owner_id = u loop
+    select user_id into heir from circle_members
+    where circle_id = c.id and user_id <> u
+    order by joined_at asc limit 1;
+    if heir is null then
+      delete from circles where id = c.id;
+    else
+      update circles set owner_id = heir where id = c.id;
+    end if;
+  end loop;
+
+  update taunts set hidden_by = array_remove(hidden_by, u) where u = any(hidden_by);
+
+  delete from auth.users where id = u;
+end;
+$$;
+
+-- Push candidates for the 15-minute window anchored to the :00/:15/:30/:45
+-- boundary containing `at` (service role only, called by `send-pushes` every
+-- 15 minutes). Implements docs/02 §7:
+--   daily_drop  at the user's chosen local time, if that time falls in the window
+--   streak_risk at 20:00 local, only if today is unplayed and streak >= 2
+--   passed      after 12:00 local, if a friend's score today beats mine and
+--               none was sent today
+-- Global rules: pref flag on, opened the app in the last 14 days, at most 2
+-- pushes per local day, never the same kind twice in a day. One row per device.
+-- Precedence when a user is eligible for more than one kind in the same run
+-- (see `chosen` below): streak_risk beats passed beats daily_drop — only one
+-- push is ever returned per user per call.
+create function public.push_candidates(at timestamptz)
+returns table (user_id uuid, kind text, apns_token text, env text, payload jsonb)
+language plpgsql stable security definer set search_path = public, pg_temp as $$
+begin
+  return query
+  with w as (
+    -- The 15-minute window containing `at`, e.g. 09:07 -> [09:00, 09:15).
+    select date_trunc('hour', at) + (floor(extract(minute from at) / 15) * interval '15 minutes') as win_start
+  ),
+  u as (
+    select us.id, us.tz, us.push_daily, us.push_daily_at, us.push_streak, us.push_passed,
+           (w.win_start at time zone us.tz) as lt,
+           (w.win_start at time zone us.tz)::date as ld,
+           ((w.win_start + interval '15 minutes') at time zone us.tz)::time as lt_end
+    from users us cross join w
+    where us.last_open_at > at - interval '14 days'
+      and exists (select 1 from devices d where d.user_id = us.id)
+  ),
+  sent_today as (
+    select nl.user_id, nl.kind, count(*) as n
+    from notification_log nl join u on u.id = nl.user_id
+    where (nl.sent_at at time zone u.tz)::date = u.ld
+      and nl.sent_at > at - interval '2 days'
+    group by nl.user_id, nl.kind
+  ),
+  totals as (select st.user_id, sum(st.n) as n from sent_today st group by st.user_id),
+  eligible as (
+    select u.* from u
+    left join totals t on t.user_id = u.id
+    where coalesce(t.n, 0) < 2
+  ),
+  -- window test: [lt::time, lt_end) with midnight wrap
+  daily as (
+    select e.id, 'daily_drop'::text as kind,
+           jsonb_build_object('friendsPlayed',
+             (select count(*) from results r
+              where r.puzzle_date = e.ld and r.user_id in (select friend_ids(e.id)))) as payload
+    from eligible e
+    where e.push_daily
+      and (case when e.lt::time <= e.lt_end
+                then e.push_daily_at >= e.lt::time and e.push_daily_at < e.lt_end
+                else e.push_daily_at >= e.lt::time or e.push_daily_at < e.lt_end end)
+      and not exists (select 1 from sent_today s where s.user_id = e.id and s.kind = 'daily_drop')
+  ),
+  streak_risk as (
+    select e.id, 'streak_risk'::text as kind,
+           jsonb_build_object('streak', st.s,
+                              'hoursLeft', greatest(0, 24 - extract(hour from e.lt))::int) as payload
+    from eligible e
+    join lateral (select streak(e.id) as s) st on true
+    where e.push_streak
+      and (case when e.lt::time <= e.lt_end
+                then time '20:00' >= e.lt::time and time '20:00' < e.lt_end
+                else time '20:00' >= e.lt::time or time '20:00' < e.lt_end end)
+      and not exists (select 1 from results r where r.user_id = e.id and r.puzzle_date = e.ld)
+      and st.s >= 2
+      and not exists (select 1 from sent_today s where s.user_id = e.id and s.kind = 'streak_risk')
+  ),
+  passed as (
+    select e.id, 'passed'::text as kind,
+           jsonb_build_object('by', p.display_name, 'others', p.others, 'rank', p.rank) as payload
+    from eligible e
+    join lateral (
+      with mine as (select r.score from results r where r.user_id = e.id and r.puzzle_date = e.ld),
+           better as (
+             select us.display_name, r.score, r.submitted_at
+             from results r join users us on us.id = r.user_id
+             where r.puzzle_date = e.ld and r.user_id in (select friend_ids(e.id))
+               and r.score > (select score from mine))
+      select (select display_name from better order by submitted_at desc limit 1) as display_name,
+             (select count(*) - 1 from better) as others,
+             (select count(*) + 1 from better) as rank
+      where exists (select 1 from mine) and exists (select 1 from better)
+    ) p on true
+    where e.push_passed
+      and e.lt::time >= time '12:00'
+      and not exists (select 1 from sent_today s where s.user_id = e.id and s.kind = 'passed')
+  ),
+  chosen as (
+    -- one kind per user per run: streak beats passed beats daily
+    select distinct on (c.id) c.id, c.kind, c.payload
+    from (select * from streak_risk union all select * from passed union all select * from daily) c
+    order by c.id, case c.kind when 'streak_risk' then 0 when 'passed' then 1 else 2 end
+  )
+  select ch.id, ch.kind, d.apns_token, d.env, ch.payload
+  from chosen ch join devices d on d.user_id = ch.id;
+end;
+$$;
+
 create function public.is_circle_member(c uuid)
 returns boolean language sql stable security definer set search_path = public, pg_temp as $$
   select exists (select 1 from circle_members where circle_id = c and user_id = auth.uid());
@@ -488,6 +639,18 @@ create policy puzzles_select on public.puzzles for select to authenticated
      and date between ((now() - interval '14 hours') at time zone 'UTC')::date
                   and ((now() + interval '14 hours') at time zone 'UTC')::date);
 create policy lists_select on public.lists for select to authenticated using (true);
+-- admins: the review queue reads every puzzle and every item, approves/reseeds
+-- puzzles, and authors content.
+create policy puzzles_admin_select on public.puzzles for select to authenticated
+  using (public.is_admin());
+create policy puzzles_admin_update on public.puzzles for update to authenticated
+  using (public.is_admin()) with check (public.is_admin());
+create policy lists_admin_write on public.lists for all to authenticated
+  using (public.is_admin()) with check (public.is_admin());
+create policy list_items_admin_all on public.list_items for all to authenticated
+  using (public.is_admin()) with check (public.is_admin());
+create policy admins_select_self on public.admins for select to authenticated
+  using (user_id = auth.uid());
 create policy list_items_select on public.list_items for select to authenticated
   using (exists (
     select 1 from public.results r
@@ -687,10 +850,19 @@ grant execute on function public.hide_taunt(uuid, date) to authenticated;
 
 -- users: never expose or allow rewriting phone_hmac / invite_code from the client.
 revoke select, update on public.users from anon, authenticated;
-grant select (id, display_name, tz, discoverable, invite_code, created_at, last_open_at)
+grant select (id, display_name, tz, discoverable, invite_code, created_at, last_open_at,
+              push_daily, push_daily_at, push_streak, push_passed)
   on public.users to authenticated;
-grant update (display_name, tz, discoverable, last_open_at)
+grant update (display_name, tz, discoverable, last_open_at,
+              push_daily, push_daily_at, push_streak, push_passed)
   on public.users to authenticated;
+alter table public.admins enable row level security;
+revoke all on function public.delete_account(uuid) from public, anon, authenticated;
+revoke all on function public.push_candidates(timestamptz) from public, anon, authenticated;
+grant execute on function public.delete_account(uuid), public.push_candidates(timestamptz),
+                          public.is_admin() to service_role;
+revoke all on function public.is_admin() from public, anon;
+grant execute on function public.is_admin() to authenticated;
 
 -- circles: the owner may rename but never rewrite the join code, and only
 -- (name, owner_id) are settable on insert.

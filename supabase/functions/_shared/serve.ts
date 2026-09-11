@@ -64,6 +64,27 @@ export function internalError(): Response {
   return jsonResponse(500, { error: "internal", code: "internal" });
 }
 
+/**
+ * Fixed-time string comparison for bearer-token checks. SHA-256-hashes both
+ * UTF-8 strings via `crypto.subtle.digest` (so the two hashes are always the
+ * same length, 32 bytes) and compares them byte-by-byte in a loop that never
+ * short-circuits, to avoid leaking the token's value through timing.
+ */
+export async function constantTimeEqual(a: string, b: string): Promise<boolean> {
+  const enc = new TextEncoder();
+  const [ha, hb] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(a)),
+    crypto.subtle.digest("SHA-256", enc.encode(b)),
+  ]);
+  const ba = new Uint8Array(ha);
+  const bb = new Uint8Array(hb);
+  let diff = 0;
+  for (let i = 0; i < 32; i++) {
+    diff |= ba[i] ^ bb[i];
+  }
+  return diff === 0;
+}
+
 /** Parses the request body as JSON. An empty body yields `{}`. Returns `{ ok: false }` on malformed JSON or a body over 1 MB. */
 export async function parseJsonBody(req: Request): Promise<{ ok: true; value: unknown } | { ok: false }> {
   try {

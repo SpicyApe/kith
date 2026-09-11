@@ -8,6 +8,15 @@
 import { RegisterStoreError, type RegisterStore } from "../register/handler.ts";
 import { SubmitStoreError, type StoredResult, type SubmitStore } from "../submit-result/handler.ts";
 import type { MatchStore } from "../match-contacts/handler.ts";
+import type { DeleteStore } from "../delete-account/handler.ts";
+import type { PushCandidate, PushKind, PushStore } from "../send-pushes/handler.ts";
+import type {
+  GenerateStore,
+  GeneratedPuzzle,
+  ItemRow,
+  ListRow,
+  Usage,
+} from "../generate-puzzles/handler.ts";
 
 // ---------------------------------------------------------------------------
 // register
@@ -236,5 +245,150 @@ export class FakeMatchStore implements MatchStore {
 
   mutualFriends(userId: string): Promise<FakeFriend[]> {
     return Promise.resolve(this.friends.get(userId) ?? []);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// delete-account
+// ---------------------------------------------------------------------------
+
+export class FakeDeleteStore implements DeleteStore {
+  /** Ordered log of every call, e.g. "prepare:u1", "deleteAuthUser:u1". */
+  calls: string[] = [];
+  prepareCalls: string[] = [];
+  deleteAuthUserCalls: string[] = [];
+  /** When set, the NEXT prepare() call rejects with this error instead of succeeding. */
+  prepareError: Error | null = null;
+  /** When set, the NEXT deleteAuthUser() call rejects with this error instead of succeeding. */
+  deleteAuthUserError: Error | null = null;
+
+  prepare(userId: string): Promise<void> {
+    this.calls.push(`prepare:${userId}`);
+    this.prepareCalls.push(userId);
+    if (this.prepareError) {
+      const err = this.prepareError;
+      this.prepareError = null;
+      return Promise.reject(err);
+    }
+    return Promise.resolve();
+  }
+
+  deleteAuthUser(userId: string): Promise<void> {
+    this.calls.push(`deleteAuthUser:${userId}`);
+    this.deleteAuthUserCalls.push(userId);
+    if (this.deleteAuthUserError) {
+      const err = this.deleteAuthUserError;
+      this.deleteAuthUserError = null;
+      return Promise.reject(err);
+    }
+    return Promise.resolve();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// send-pushes
+// ---------------------------------------------------------------------------
+
+export class FakePushStore implements PushStore {
+  candidatesResult: PushCandidate[] = [];
+  /** When set, the NEXT candidates() call rejects with this error. */
+  candidatesError: Error | null = null;
+  candidatesCalls: Date[] = [];
+  logCalls: Array<{ userId: string; kind: PushKind; at: Date }> = [];
+  deleteDeviceCalls: Array<{ userId: string; apnsToken: string }> = [];
+  /** When set, the NEXT log() call rejects with this error instead of succeeding. */
+  logError: Error | null = null;
+  /** When set, the NEXT deleteDevice() call rejects with this error instead of succeeding. */
+  deleteDeviceError: Error | null = null;
+
+  candidates(at: Date): Promise<PushCandidate[]> {
+    this.candidatesCalls.push(at);
+    if (this.candidatesError) {
+      const err = this.candidatesError;
+      this.candidatesError = null;
+      return Promise.reject(err);
+    }
+    return Promise.resolve(this.candidatesResult);
+  }
+
+  log(userId: string, kind: PushKind, at: Date): Promise<void> {
+    this.logCalls.push({ userId, kind, at });
+    if (this.logError) {
+      const err = this.logError;
+      this.logError = null;
+      return Promise.reject(err);
+    }
+    return Promise.resolve();
+  }
+
+  deleteDevice(userId: string, apnsToken: string): Promise<void> {
+    this.deleteDeviceCalls.push({ userId, apnsToken });
+    if (this.deleteDeviceError) {
+      const err = this.deleteDeviceError;
+      this.deleteDeviceError = null;
+      return Promise.reject(err);
+    }
+    return Promise.resolve();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// generate-puzzles
+// ---------------------------------------------------------------------------
+
+export class FakeGenerateStore implements GenerateStore {
+  listsData: ListRow[] = [];
+  itemsData: ItemRow[] = [];
+  usageData: Usage = { listUses: [], itemUses: [] };
+  existingDatesData: string[] = [];
+  nextNumberValue = 1;
+  /** Current seed for a date, as `seedOf` would report it. Absent = null (no puzzle). */
+  seeds = new Map<string, number>();
+
+  inserted: Array<{ p: GeneratedPuzzle; number: number }> = [];
+  replaced: GeneratedPuzzle[] = [];
+  /** When set, the NEXT replace() call rejects with this error. */
+  replaceError: Error | null = null;
+
+  lists(): Promise<ListRow[]> {
+    return Promise.resolve(this.listsData);
+  }
+
+  items(): Promise<ItemRow[]> {
+    return Promise.resolve(this.itemsData);
+  }
+
+  usage(_from: string): Promise<Usage> {
+    return Promise.resolve(this.usageData);
+  }
+
+  existingDates(from: string, to: string): Promise<string[]> {
+    return Promise.resolve(this.existingDatesData.filter((d) => d >= from && d <= to));
+  }
+
+  nextNumber(): Promise<number> {
+    return Promise.resolve(this.nextNumberValue);
+  }
+
+  insert(p: GeneratedPuzzle, number: number): Promise<void> {
+    this.inserted.push({ p, number });
+    this.existingDatesData.push(p.date);
+    this.seeds.set(p.date, p.seed);
+    return Promise.resolve();
+  }
+
+  replace(p: GeneratedPuzzle): Promise<void> {
+    if (this.replaceError) {
+      const err = this.replaceError;
+      this.replaceError = null;
+      return Promise.reject(err);
+    }
+    this.replaced.push(p);
+    this.seeds.set(p.date, p.seed);
+    return Promise.resolve();
+  }
+
+  seedOf(date: string): Promise<number | null> {
+    return Promise.resolve(this.seeds.has(date) ? this.seeds.get(date)! : null);
   }
 }

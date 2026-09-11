@@ -163,7 +163,7 @@ Storing peppered hashes of non-users' numbers is the one deliberate tradeoff. Wi
 ### Deletion
 
 - Revoke contacts in iOS Settings: on next open the client detects `denied`, calls `delete-contact-hashes`, and the server drops the user's rows in `contact_hashes` and recomputes affected `matches` to non-mutual.
-- Delete account (in app, no email): auth user, `users`, `devices`, `contact_hashes`, `results`, `reactions`, `taunts`, `circle_members` deleted in one transaction. Auth-provider records purged via the admin API. Completed synchronously, confirmed on screen. Backups age out in 30 days; the policy says so.
+- Delete account (in app, no email): one SQL function, `delete_account(u)`, run by the `delete-account` edge function with the service role. It hands owned circles to their oldest member (or deletes empty ones), scrubs the user's id from other users' taunt hide-lists, then deletes the `auth.users` row, which cascades through `users` to devices, contact hashes, matches, results, reactions, taunts, memberships, puzzle starts, sync and notification logs; `events` keeps rows with the user id set to null. All in one transaction, confirmed on screen. The admin-API delete runs afterwards as a no-op safety net. Backups age out in 30 days; the policy says so.
 
 ### App Store representation
 

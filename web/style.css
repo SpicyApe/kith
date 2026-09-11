@@ -1,0 +1,274 @@
+/* Kith — shared stylesheet */
+
+:root {
+  --bg: #ffffff;
+  --fg: #16130f;
+  --muted: #5b564f;
+  --accent: #e4593f;
+  --line: #e8e4dd;
+  --card: #faf8f5;
+  --max-width: 640px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.55;
+  font-size: 17px;
+}
+
+.wrap {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 48px 24px 64px;
+}
+
+header.site {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 40px;
+}
+
+.wordmark {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.wordmark span {
+  color: var(--accent);
+}
+
+h1 {
+  font-size: 32px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  margin: 0 0 12px;
+}
+
+h2 {
+  font-size: 21px;
+  letter-spacing: -0.01em;
+  margin: 0 0 12px;
+}
+
+h3 {
+  font-size: 17px;
+  margin: 0 0 8px;
+}
+
+p {
+  margin: 0 0 16px;
+  color: var(--fg);
+}
+
+.pitch {
+  font-size: 19px;
+  color: var(--muted);
+  margin: 0 0 32px;
+}
+
+a {
+  color: var(--accent);
+}
+
+section {
+  margin: 0 0 44px;
+}
+
+section:last-of-type {
+  margin-bottom: 0;
+}
+
+.grid-example {
+  font-family: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px 24px;
+  font-size: 20px;
+  line-height: 1.7;
+  letter-spacing: 0.08em;
+  white-space: pre;
+  margin: 0 0 32px;
+  overflow-x: auto;
+}
+
+.grid-example .meta {
+  font-size: 13px;
+  letter-spacing: normal;
+  color: var(--muted);
+  display: block;
+  margin-bottom: 6px;
+}
+
+ul.plain {
+  margin: 0 0 16px;
+  padding-left: 20px;
+}
+
+ul.plain li {
+  margin-bottom: 8px;
+}
+
+.reassurance {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px;
+}
+
+.reassurance li {
+  padding: 10px 0 10px 28px;
+  position: relative;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.reassurance li:last-child {
+  border-bottom: none;
+}
+
+.reassurance li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.appstore-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--fg);
+  color: #fff;
+  text-decoration: none;
+  padding: 12px 20px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.appstore-badge:hover {
+  opacity: 0.9;
+}
+
+.button {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+  padding: 12px 20px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.button:hover {
+  opacity: 0.92;
+}
+
+.button.secondary {
+  background: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--line);
+}
+
+.code-chip {
+  display: inline-block;
+  font-family: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 18px;
+  letter-spacing: 0.04em;
+  margin: 0 0 20px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 24px 0;
+}
+
+table.privacy-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 24px;
+  font-size: 15px;
+}
+
+table.privacy-table th,
+table.privacy-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+table.privacy-table th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.effective-date {
+  color: var(--muted);
+  font-size: 14px;
+  margin: -4px 0 32px;
+}
+
+footer.site {
+  margin-top: 56px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 14px;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+footer.site a {
+  color: var(--muted);
+  text-decoration: underline;
+}
+
+.center {
+  text-align: center;
+}
+
+@media (max-width: 480px) {
+  h1 {
+    font-size: 27px;
+  }
+
+  .wrap {
+    padding: 32px 18px 48px;
+  }
+
+  .grid-example {
+    font-size: 17px;
+    padding: 16px 18px;
+  }
+}

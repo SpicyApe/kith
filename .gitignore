@@ -6,3 +6,4 @@ node_modules/
 .env
 .env.*
 supabase/.temp/
+apps/ios/Kith/Config/Config.plist

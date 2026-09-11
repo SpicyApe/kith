@@ -33,6 +33,7 @@ const D = "44444444-4444-4444-4444-444444444444"; // isolated: no matches, no ci
 const today = new Date().toISOString().slice(0, 10);
 const yest = new Date(Date.now() - 86400e3).toISOString().slice(0, 10);
 const twoAgo = new Date(Date.now() - 2 * 86400e3).toISOString().slice(0, 10);
+const tomorrow = new Date(Date.now() + 86400e3).toISOString().slice(0, 10);
 
 await db.exec(`
   insert into auth.users values ('${A}'),('${B}'),('${C}'),('${D}');
@@ -106,9 +107,12 @@ await db.exec(`
   -- Same reasoning for users: the blanket table grant above re-opens every column,
   -- so narrow it back down the way the migration does for authenticated.
   revoke select, update on public.users from app;
-  grant select (id, display_name, tz, discoverable, invite_code, created_at, last_open_at)
+  grant select (id, display_name, tz, discoverable, invite_code, created_at, last_open_at,
+                push_daily, push_daily_at, push_streak, push_passed)
     on public.users to app;
-  grant update (display_name, tz, discoverable, last_open_at) on public.users to app;
+  grant update (display_name, tz, discoverable, last_open_at,
+                push_daily, push_daily_at, push_streak, push_passed)
+    on public.users to app;
   set role app;
   set app.uid = '${B}';
 `);
@@ -421,5 +425,343 @@ const su = await db.query(`select * from public.sync_usage('${A}', now() - inter
 console.log("service_role sync_usage:", su.rows[0]);
 await db.exec(`reset role`);
 console.log("service_role: recompute_matches/streak/sync_usage all callable - OK");
+
+// ---------------------------------------------------------------------------
+// push_candidates
+// ---------------------------------------------------------------------------
+// NOTE on clock values: `push_candidates(at)` uses a *forward* 15-minute
+// window [at, at+15min) against each local target time (push_daily_at, or
+// the fixed 20:00 for streak_risk) — i.e. a target matches when
+// `at` <= target < at+15min, so `at` must land at-or-before the target
+// (within the preceding 15 minutes), never after it. Calling 5 minutes
+// *after* a target (e.g. 08:05Z for an 08:00 target) never matches. The
+// checks below call `push_candidates` exactly at each target time, which is
+// always inside its own window.
+await db.exec(`
+  insert into public.devices (user_id, apns_token, env) values
+    ('${A}', 'tokA', 'sandbox'),
+    ('${B}', 'tokB', 'sandbox');
+  update public.users set push_daily_at = '08:00' where id = '${A}';
+`);
+
+const daily1 = await db.query(
+  `select user_id, kind, payload from public.push_candidates('${today}T08:00:00Z') where user_id = '${A}'`,
+);
+if (daily1.rows.length !== 1 || daily1.rows[0].kind !== "daily_drop") {
+  throw new Error(`push_candidates: expected one daily_drop row for A at 08:00Z, got ${JSON.stringify(daily1.rows)}`);
+}
+if (typeof daily1.rows[0].payload.friendsPlayed !== "number") {
+  throw new Error(`push_candidates: payload.friendsPlayed should be a number, got ${JSON.stringify(daily1.rows[0].payload)}`);
+}
+console.log("push_candidates: daily_drop fires for A at push_daily_at - OK");
+
+const daily2 = await db.query(
+  `select user_id from public.push_candidates('${today}T07:30:00Z') where user_id = '${A}'`,
+);
+if (daily2.rows.length !== 0) throw new Error(`push_candidates: expected no row for A at 07:30Z, got ${JSON.stringify(daily2.rows)}`);
+console.log("push_candidates: no daily_drop for A well before its window - OK");
+
+await db.exec(`insert into public.notification_log (user_id, kind) values ('${A}', 'daily_drop')`);
+const daily3 = await db.query(
+  `select user_id from public.push_candidates('${today}T08:00:00Z') where user_id = '${A}' and kind = 'daily_drop'`,
+);
+if (daily3.rows.length !== 0) throw new Error(`push_candidates: expected no repeat daily_drop for A once logged today, got ${JSON.stringify(daily3.rows)}`);
+console.log("push_candidates: daily_drop not repeated once logged today - OK");
+
+// Streak: A already played today (seeded), so streak_risk must not fire for A.
+const streakA = await db.query(
+  `select user_id from public.push_candidates('${today}T20:00:00Z') where user_id = '${A}' and kind = 'streak_risk'`,
+);
+if (streakA.rows.length !== 0) throw new Error(`push_candidates: A played today and must not get streak_risk, got ${JSON.stringify(streakA.rows)}`);
+console.log("push_candidates: streak_risk withheld from A (already played today) - OK");
+
+const E = "55555555-5555-5555-5555-555555555555";
+await db.exec(`
+  insert into auth.users values ('${E}');
+  insert into public.users (id, phone_hmac, display_name) values ('${E}', 'he', 'Ellis');
+  insert into public.devices (user_id, apns_token, env) values ('${E}', 'tokE', 'sandbox');
+  insert into public.results (user_id, puzzle_date, attempts, tries, solved, elapsed_ms, score, tz) values
+    ('${E}', '${twoAgo}', '[]', 1, true, 10000, 900, 'UTC'),
+    ('${E}', '${yest}',   '[]', 1, true, 10000, 900, 'UTC');
+`);
+const streakE = await db.query(
+  `select user_id, kind, payload from public.push_candidates('${today}T20:00:00Z') where user_id = '${E}'`,
+);
+if (streakE.rows.length !== 1 || streakE.rows[0].kind !== "streak_risk" || streakE.rows[0].payload.streak !== 2) {
+  throw new Error(`push_candidates: expected exactly one streak_risk row for E with streak 2, got ${JSON.stringify(streakE.rows)}`);
+}
+console.log("push_candidates: E (2-day streak, unplayed today) gets streak_risk with streak=2 - OK");
+
+// Passed: at (local) 13:00, B trails mutual friend A; A (top) gets nothing.
+const passedB = await db.query(
+  `select payload from public.push_candidates('${today}T13:00:00Z') where user_id = '${B}' and kind = 'passed'`,
+);
+if (passedB.rows.length !== 1 || passedB.rows[0].payload.by !== "Alex" || passedB.rows[0].payload.rank !== 2) {
+  throw new Error(`push_candidates: expected a passed row for B (by Alex, rank 2), got ${JSON.stringify(passedB.rows)}`);
+}
+const passedA = await db.query(
+  `select 1 from public.push_candidates('${today}T13:00:00Z') where user_id = '${A}' and kind = 'passed'`,
+);
+if (passedA.rows.length !== 0) throw new Error("push_candidates: A is top scorer and must not get a passed row");
+console.log("push_candidates: passed fires for B (trailing Alex, rank 2) and not for top-scorer A - OK");
+
+// Cap: two notifications already logged today for E caps them out entirely.
+await db.exec(`
+  insert into public.notification_log (user_id, kind) values ('${E}', 'daily_drop'), ('${E}', 'passed');
+`);
+const capE = await db.query(`select kind from public.push_candidates('${today}T20:00:00Z') where user_id = '${E}'`);
+if (capE.rows.length !== 0) throw new Error(`push_candidates: E hit the daily cap and should get 0 rows, got ${JSON.stringify(capE.rows)}`);
+console.log("push_candidates: per-day cap (2) excludes E entirely - OK");
+
+// Preference: disabling push_passed removes B's passed row.
+await db.exec(`update public.users set push_passed = false where id = '${B}'`);
+const passedBOff = await db.query(
+  `select 1 from public.push_candidates('${today}T13:00:00Z') where user_id = '${B}' and kind = 'passed'`,
+);
+if (passedBOff.rows.length !== 0) throw new Error("push_candidates: B disabled push_passed and should get no passed row");
+console.log("push_candidates: push_passed=false suppresses B's passed row - OK");
+
+// Inactivity: clear E's log, then push last_open_at out past the 14-day cutoff.
+await db.exec(`delete from public.notification_log where user_id = '${E}'`);
+await db.exec(`update public.users set last_open_at = now() - interval '20 days' where id = '${E}'`);
+const inactiveE = await db.query(`select kind from public.push_candidates('${today}T20:00:00Z') where user_id = '${E}'`);
+if (inactiveE.rows.length !== 0) throw new Error(`push_candidates: E has been inactive 20 days and should get 0 rows, got ${JSON.stringify(inactiveE.rows)}`);
+console.log("push_candidates: inactivity (>14 days since last_open_at) excludes E - OK");
+
+// Priority: E eligible for both streak_risk (fixed 20:00) and daily_drop
+// (push_daily_at set to 20:00 too) at the same window; streak wins.
+await db.exec(`
+  update public.users set push_daily_at = '20:00', last_open_at = now() where id = '${E}';
+  delete from public.notification_log where user_id = '${E}';
+`);
+const priorityE = await db.query(`select kind from public.push_candidates('${today}T20:00:00Z') where user_id = '${E}'`);
+if (priorityE.rows.length !== 1 || priorityE.rows[0].kind !== "streak_risk") {
+  throw new Error(`push_candidates: expected exactly one row for E (streak_risk beats daily_drop), got ${JSON.stringify(priorityE.rows)}`);
+}
+console.log("push_candidates: streak_risk takes priority over daily_drop for the same user/window - OK");
+
+// ---------------------------------------------------------------------------
+// push_candidates: window anchoring (B3) and the sent_today lookback bound (A1)
+// ---------------------------------------------------------------------------
+// F: midnight wrap. push_daily_at = 00:00, tz UTC. The window containing
+// `at` is anchored to the :00/:15/:30/:45 boundary, so 23:45Z's window is
+// [23:45, 00:00) — 00:00 is NOT inside it — while the very next window,
+// [00:00, 00:15) the following day, does contain it.
+const F = "66666666-6666-6666-6666-666666666666";
+await db.exec(`
+  insert into auth.users values ('${F}');
+  insert into public.users (id, phone_hmac, display_name, tz, push_daily_at) values
+    ('${F}', 'hf', 'Fin', 'UTC', '00:00');
+  insert into public.devices (user_id, apns_token, env) values ('${F}', 'tokF', 'sandbox');
+`);
+const wrapBefore = await db.query(`select 1 from public.push_candidates('${today}T23:45:00Z') where user_id = '${F}'`);
+if (wrapBefore.rows.length !== 0) throw new Error(`push_candidates: F should get no row for the [23:45,00:00) window, got ${JSON.stringify(wrapBefore.rows)}`);
+const wrapAfter = await db.query(`select kind from public.push_candidates('${tomorrow}T00:00:00Z') where user_id = '${F}'`);
+if (wrapAfter.rows.length !== 1 || wrapAfter.rows[0].kind !== "daily_drop") {
+  throw new Error(`push_candidates: F should get daily_drop for the [00:00,00:15) window, got ${JSON.stringify(wrapAfter.rows)}`);
+}
+console.log("push_candidates: midnight wrap — [23:45,00:00) misses, [00:00,00:15) matches - OK");
+
+// G: non-UTC user. tz America/New_York, push_daily_at 08:00. In September
+// New York is on EDT (UTC-4), so 12:00Z is 08:00 local; 08:00Z is 04:00 local.
+const G = "77777777-7777-7777-7777-777777777777";
+await db.exec(`
+  insert into auth.users values ('${G}');
+  insert into public.users (id, phone_hmac, display_name, tz, push_daily_at) values
+    ('${G}', 'hg', 'Georgia', 'America/New_York', '08:00');
+  insert into public.devices (user_id, apns_token, env) values ('${G}', 'tokG', 'sandbox');
+`);
+const nyMatch = await db.query(`select kind from public.push_candidates('${today}T12:00:00Z') where user_id = '${G}'`);
+if (nyMatch.rows.length !== 1 || nyMatch.rows[0].kind !== "daily_drop") {
+  throw new Error(`push_candidates: G (America/New_York) should get daily_drop at 12:00Z (08:00 EDT), got ${JSON.stringify(nyMatch.rows)}`);
+}
+const nyMiss = await db.query(`select 1 from public.push_candidates('${today}T08:00:00Z') where user_id = '${G}'`);
+if (nyMiss.rows.length !== 0) throw new Error(`push_candidates: G should get no row at 08:00Z (04:00 EDT), got ${JSON.stringify(nyMiss.rows)}`);
+console.log("push_candidates: non-UTC user (America/New_York) fires by local time, not UTC clock time - OK");
+
+// H: window-boundary user. push_daily_at 08:15, tz UTC. Calling exactly at
+// 08:00Z (window [08:00,08:15)) must not match (08:15 is the window's
+// exclusive end); calling at 08:15Z (window [08:15,08:30)) must.
+const H = "88888888-8888-8888-8888-888888888888";
+await db.exec(`
+  insert into auth.users values ('${H}');
+  insert into public.users (id, phone_hmac, display_name, tz, push_daily_at) values
+    ('${H}', 'hh', 'Harper', 'UTC', '08:15');
+  insert into public.devices (user_id, apns_token, env) values ('${H}', 'tokH', 'sandbox');
+`);
+const boundaryEarly = await db.query(`select 1 from public.push_candidates('${today}T08:00:00Z') where user_id = '${H}'`);
+if (boundaryEarly.rows.length !== 0) throw new Error(`push_candidates: H should get no row at 08:00Z, got ${JSON.stringify(boundaryEarly.rows)}`);
+const boundaryOn = await db.query(`select kind from public.push_candidates('${today}T08:15:00Z') where user_id = '${H}'`);
+if (boundaryOn.rows.length !== 1 || boundaryOn.rows[0].kind !== "daily_drop") {
+  throw new Error(`push_candidates: H should get exactly one daily_drop row at 08:15Z, got ${JSON.stringify(boundaryOn.rows)}`);
+}
+console.log("push_candidates: window boundary — exactly one of 08:00Z/08:15Z fires (the second) - OK");
+
+// I: sent_today boundary. A notification_log row at yesterday 23:30Z for a
+// UTC user must not count toward today's per-day cap or "already sent today".
+const I = "99999999-9999-9999-9999-999999999999";
+await db.exec(`
+  insert into auth.users values ('${I}');
+  insert into public.users (id, phone_hmac, display_name, tz, push_daily_at) values
+    ('${I}', 'hi', 'Ivy', 'UTC', '09:00');
+  insert into public.devices (user_id, apns_token, env) values ('${I}', 'tokI', 'sandbox');
+  insert into public.notification_log (user_id, kind, sent_at) values ('${I}', 'daily_drop', '${yest}T23:30:00Z');
+`);
+const sentTodayBoundary = await db.query(`select kind from public.push_candidates('${today}T09:00:00Z') where user_id = '${I}'`);
+if (sentTodayBoundary.rows.length !== 1 || sentTodayBoundary.rows[0].kind !== "daily_drop") {
+  throw new Error(`push_candidates: I's yesterday-23:30Z log row should not block today's daily_drop, got ${JSON.stringify(sentTodayBoundary.rows)}`);
+}
+console.log("push_candidates: a notification_log row from yesterday 23:30Z does not count toward today's cap - OK");
+
+// ---------------------------------------------------------------------------
+// delete_account
+// ---------------------------------------------------------------------------
+// Reuses circle ABC123 (owner A; C joined earlier via join_circle, B later),
+// established in the RLS section above.
+const preOwner = await db.query(`select owner_id from public.circles where code = 'ABC123'`);
+if (preOwner.rows[0].owner_id !== A) throw new Error("delete_account setup: expected A to still own ABC123 before delete_account");
+
+await db.query(`select public.delete_account('${A}')`);
+const heirOwner = await db.query(`select owner_id from public.circles where code = 'ABC123'`);
+if (heirOwner.rows.length !== 1 || heirOwner.rows[0].owner_id !== C) {
+  throw new Error(`delete_account: expected ownership to pass to C (earliest other joiner), got ${JSON.stringify(heirOwner.rows)}`);
+}
+console.log("delete_account: ownership of ABC123 passed from A to C (earliest other member) - OK");
+
+// Idempotent: A owns nothing now (and A itself is already gone), so calling
+// again must be a harmless no-op.
+await db.query(`select public.delete_account('${A}')`);
+const heirOwnerAgain = await db.query(`select owner_id from public.circles where code = 'ABC123'`);
+if (heirOwnerAgain.rows[0].owner_id !== C) throw new Error("delete_account: calling delete_account(A) twice should be a no-op");
+console.log("delete_account: calling delete_account(A) again is a harmless no-op - OK");
+
+// D owns a circle with no other members: delete_account(D) must delete it outright.
+await db.exec(`insert into public.circles (code, name, owner_id) values ('DSOLO1', 'Dana Solo', '${D}')`);
+await db.query(`select public.delete_account('${D}')`);
+const dCircle = await db.query(`select 1 from public.circles where code = 'DSOLO1'`);
+if (dCircle.rows.length !== 0) throw new Error("delete_account: D's empty owned circle should have been deleted");
+console.log("delete_account: D's ownerless (no other members) circle was deleted - OK");
+
+// delete_account now does the full deletion in SQL: auth.users and (via the
+// on-delete-cascade FK) public.users must both be gone for D.
+const dAuthUsers = await db.query(`select count(*)::int as n from auth.users where id = '${D}'`);
+if (dAuthUsers.rows[0].n !== 0) throw new Error(`delete_account: expected auth.users to have 0 rows for D, got ${dAuthUsers.rows[0].n}`);
+const dPublicUsers = await db.query(`select count(*)::int as n from public.users where id = '${D}'`);
+if (dPublicUsers.rows[0].n !== 0) throw new Error(`delete_account: expected public.users to have 0 rows for D, got ${dPublicUsers.rows[0].n}`);
+console.log("delete_account: D's auth.users and public.users rows are both gone (cascade) - OK");
+
+// Owner's own circle_members row can be missing (e.g. removed by some other
+// path) before delete_account runs; the heir hand-off must still work purely
+// from `circles.owner_id`, not from the owner having a circle_members row.
+const J = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+const K = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+await db.exec(`
+  insert into auth.users values ('${J}'), ('${K}');
+  insert into public.users (id, phone_hmac, display_name) values ('${J}', 'hj', 'Jordan'), ('${K}', 'hk', 'Kai');
+  insert into public.circles (code, name, owner_id) values ('JOWNER1', 'J Circle', '${J}');
+  insert into public.circle_members (circle_id, user_id) select id, '${K}' from public.circles where code = 'JOWNER1';
+  delete from public.circle_members where circle_id = (select id from public.circles where code = 'JOWNER1') and user_id = '${J}';
+`);
+const jMembersBefore = await db.query(`select user_id from public.circle_members where circle_id = (select id from public.circles where code = 'JOWNER1')`);
+if (jMembersBefore.rows.length !== 1 || jMembersBefore.rows[0].user_id !== K) {
+  throw new Error(`delete_account setup: expected only K in circle_members for JOWNER1, got ${JSON.stringify(jMembersBefore.rows)}`);
+}
+await db.query(`select public.delete_account('${J}')`);
+const jHeir = await db.query(`select owner_id from public.circles where code = 'JOWNER1'`);
+if (jHeir.rows.length !== 1 || jHeir.rows[0].owner_id !== K) {
+  throw new Error(`delete_account: expected JOWNER1 to pass to K even though J had no circle_members row, got ${JSON.stringify(jHeir.rows)}`);
+}
+console.log("delete_account: heir hand-off works when the owner's own circle_members row is already absent - OK");
+
+// ---------------------------------------------------------------------------
+// is_admin() and the admin review-queue policies on puzzles / lists / list_items
+// ---------------------------------------------------------------------------
+const admin30 = new Date(Date.now() - 30 * 86400e3).toISOString().slice(0, 10);
+
+await db.exec(`set role app; set app.uid = '${B}';`);
+const isAdminBefore = await db.query(`select public.is_admin() as v`);
+if (isAdminBefore.rows[0].v !== false) throw new Error("is_admin: B should not be admin yet");
+
+// Non-admin sees only approved puzzles within the +/-14h window (same as the
+// puzzles_select policy exercised earlier for start_puzzle).
+const winNow = await db.query(`
+  select ((now() - interval '14 hours') at time zone 'UTC')::date::text as lo,
+         ((now() + interval '14 hours') at time zone 'UTC')::date::text as hi`);
+const inWindowSeeded = [twoAgo, yest, today].filter((d) => d >= winNow.rows[0].lo && d <= winNow.rows[0].hi);
+const nonAdminCount = await db.query(`select count(*)::int as n from public.puzzles`);
+if (nonAdminCount.rows[0].n !== inWindowSeeded.length) {
+  throw new Error(`is_admin policies: non-admin B expected to see ${inWindowSeeded.length} puzzles, got ${nonAdminCount.rows[0].n}`);
+}
+await db.exec(`reset role`);
+console.log(`is_admin: B (non-admin) sees only the ${inWindowSeeded.length} in-window approved puzzle(s) - OK`);
+
+// Grant B admin, and add a puzzle well outside the client window (and a
+// second, separate list/items so the list_items admin-visibility check below
+// isn't confounded by items every user has already played).
+await db.exec(`
+  insert into public.admins (user_id) values ('${B}');
+  insert into public.lists (prompt_template, unit, direction) values ('Order by depth', 'm', 'Deepest first');
+  insert into public.list_items (list_id, label, value, source_url, familiarity) values
+    (2, 'Mariana Trench', 10935, 'u', 2),
+    (2, 'Challenger Deep', 10902, 'u', 3),
+    (2, 'Puerto Rico Trench', 8376, 'u', 2),
+    (2, 'Sunda Trench', 7290, 'u', 1),
+    (2, 'Kermadec Trench', 10047, 'u', 1);
+  insert into public.puzzles (date, number, list_id, item_ids, correct_order, status, difficulty) values
+    ('${admin30}', 200, 2, '{6,7,8,9,10}', '{6,7,8,9,10}', 'pending', 'easy');
+`);
+
+await db.exec(`set role app; set app.uid = '${B}';`);
+const isAdminAfter = await db.query(`select public.is_admin() as v`);
+if (isAdminAfter.rows[0].v !== true) throw new Error("is_admin: B should be admin after being added to admins");
+
+// 3 from the original seed + the pending in-window one from the start_puzzle
+// tests above + the new out-of-window one just inserted = 5 total rows.
+const adminCount = await db.query(`select count(*)::int as n from public.puzzles`);
+if (adminCount.rows[0].n !== 5) throw new Error(`is_admin policies: admin B expected to see all 5 puzzles, got ${adminCount.rows[0].n}`);
+console.log("is_admin: B (admin) sees all 5 puzzles, including the out-of-window pending one - OK");
+
+const approveResult = await db.query(`update public.puzzles set status = 'approved' where date = '${admin30}'`);
+const approveCount = approveResult.affectedRows ?? approveResult.rows.length;
+if (approveCount !== 1) throw new Error(`is_admin policies: admin update should affect 1 row, got ${approveCount}`);
+
+const adminItems = await db.query(`select value from public.list_items`);
+if (adminItems.rows.length !== 10) throw new Error(`is_admin policies: admin should see all 10 list_items rows, got ${adminItems.rows.length}`);
+console.log("is_admin: admin B can approve a pending puzzle and read every list_items row - OK");
+await db.exec(`reset role`);
+
+// Same actions as C, who is not an admin: both must be no-ops under RLS.
+await db.exec(`set role app; set app.uid = '${C}';`);
+const cUpdate = await db.query(`update public.puzzles set status = 'approved' where date = '${admin30}'`);
+const cUpdateCount = cUpdate.affectedRows ?? cUpdate.rows.length;
+if (cUpdateCount !== 0) throw new Error(`is_admin policies: non-admin C's update should affect 0 rows, got ${cUpdateCount}`);
+const cItems = await db.query(`select value from public.list_items where list_id = 2`);
+if (cItems.rows.length !== 0) throw new Error(`is_admin policies: non-admin C should see 0 list_items for a list they haven't played, got ${cItems.rows.length}`);
+await db.exec(`reset role`);
+console.log("is_admin: non-admin C's update affects 0 rows and sees 0 unplayed list_items - OK");
+
+// ---------------------------------------------------------------------------
+// users.push_* columns
+// ---------------------------------------------------------------------------
+await db.exec(`set role app; set app.uid = '${B}';`);
+await db.query(`update public.users set push_daily_at = '09:30', push_streak = false where id = '${B}'`);
+const pushCols = await db.query(`select push_daily_at, push_streak from public.users where id = '${B}'`);
+if (pushCols.rows[0].push_streak !== false) throw new Error(`push_* columns: push_streak update should have taken effect, got ${JSON.stringify(pushCols.rows[0])}`);
+if (!String(pushCols.rows[0].push_daily_at).startsWith("09:30")) throw new Error(`push_* columns: push_daily_at update should have taken effect, got ${JSON.stringify(pushCols.rows[0])}`);
+await db.exec(`reset role`);
+console.log("users.push_* columns: app role can update push_daily_at/push_streak for self - OK");
+
+// ---------------------------------------------------------------------------
+// puzzles.seed round-trip (B1: seed is now bigint, beyond int32 range)
+// ---------------------------------------------------------------------------
+await db.exec(`
+  insert into public.puzzles (date, number, list_id, item_ids, correct_order, status, difficulty, seed) values
+    ('2099-01-01', 99999, 1, '{1,2,3,4,5}', '{1,2,3,4,5}', 'pending', 'easy', 3298495047);
+`);
+const seedRow = await db.query(`select seed from public.puzzles where date = '2099-01-01'`);
+if (String(seedRow.rows[0].seed) !== "3298495047") {
+  throw new Error(`puzzles.seed: expected 3298495047 to round-trip, got ${JSON.stringify(seedRow.rows[0])}`);
+}
+console.log("puzzles.seed: a value beyond int32 range (3298495047) round-trips through the bigint column - OK");
 
 console.log("\nALL SCHEMA CHECKS PASSED");

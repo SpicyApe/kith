@@ -1,0 +1,13 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["TEAMID.app.kith.ios"],
+        "components": [
+          { "/": "/p/*" },
+          { "/": "/c/*" }
+        ]
+      }
+    ]
+  }
+}

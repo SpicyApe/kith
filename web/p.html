@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kith — Puzzle</title>
+<meta name="description" content="Your friend is playing today's Lineup. Get the app to see how you compare.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="site">
+    <a class="wordmark" href="/">K<span>i</span>th</a>
+  </header>
+
+  <main class="center">
+    <h1 id="puzzle-title">Kith</h1>
+    <p class="pitch">Your friend is playing today's Lineup. Get the app to see how you compare.</p>
+
+    <div class="actions" style="justify-content:center">
+      <!-- replace idPLACEHOLDER with the real App Store id -->
+      <a class="appstore-badge" id="appstore-link" href="https://apps.apple.com/app/idPLACEHOLDER">Get the app</a>
+    </div>
+
+    <p><small>If you have Kith installed, this link should have opened it directly.</small></p>
+  </main>
+
+  <footer class="site">
+    <span>&copy; 2026 Kith</span>
+    <a href="/privacy.html">Privacy</a>
+    <a href="/terms.html">Terms</a>
+  </footer>
+</div>
+
+<script>
+  // The share link is /p/<number>?r=<code>. Cloudflare Pages rewrites
+  // /p/* to this file with status 200, so the browser's address bar
+  // still shows the original path and query — read both from location.
+  (function () {
+    var parts = location.pathname.split("/").filter(Boolean); // ["p", "142"]
+    var number = parts[1];
+    if (number && /^\d+$/.test(number)) {
+      document.getElementById("puzzle-title").textContent = "Kith #" + number;
+      document.title = "Kith #" + number;
+    }
+
+    var params = new URLSearchParams(location.search);
+    var ref = params.get("r");
+    if (ref && /^[A-Z0-9]{4,12}$/i.test(ref)) {
+      document.cookie = "kith_ref=" + encodeURIComponent(ref) + "; Max-Age=2592000; Path=/; SameSite=Lax; Secure";
+    }
+  })();
+</script>
+</body>
+</html>

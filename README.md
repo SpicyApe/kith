@@ -12,7 +12,15 @@ A daily puzzle app where the leaderboard is made of the contacts in your phone w
 | `supabase/functions/{register,submit-result,match-contacts}/` | Edge functions. Each is a pure `handler.ts` over a Store interface, a Supabase-backed `store.ts`, and a thin `index.ts`. Tests use in-memory fakes from `_shared/test_fakes.ts`. | same command |
 | `supabase/functions/_shared/hashing.ts` | Phone canonicalisation and the sha256 → peppered HMAC transform for contact matching | same command |
 | `packages/LineupEngine/Tests/LineupEngineTests/Fixtures/golden.json` | Golden vectors read by both test suites so the twins cannot drift | both of the above |
-| `supabase/migrations/0001_init.sql` | Schema, row-level security, board / streak / circle RPCs | `cd supabase/tests && npm install && npm test` (runs the migration in in-process Postgres with an `auth` shim and a non-superuser role) |
+| `supabase/migrations/0001_init.sql` | Schema, row-level security, board / streak / circle / push RPCs | `cd supabase/tests && npm install && npm test` (runs the migration in in-process Postgres with an `auth` shim and a non-superuser role) |
+| `supabase/migrations/0002_cron.sql` | pg_cron schedules for pushes and puzzle generation (hosted only) | — |
+| `supabase/seed/content.sql` | Seed lists and items, disabled until a human checks each value | schema test loads it |
+| `supabase/functions/{delete-account,send-pushes,generate-puzzles}/` | Account deletion, APNs pushes from cron, puzzle generator | `deno test --allow-read` |
+| `admin/index.html` | Single-file review queue for the content author | manual |
+| `web/` | Landing site, share/circle link fallbacks, privacy policy, terms, AASA (Cloudflare Pages) | manual |
+| `packages/KithCore/` | Platform-neutral client logic: API client, contact hashing and sync planning, local-day math, screen presenters | `swift test` |
+| `apps/ios/` | SwiftUI app target (XcodeGen spec + sources). Builds only on macOS; CI produces an unsigned IPA | `.github/workflows/ios.yml` |
+| `docs/06-deployment-runbook.md` | Every step from repo to phone | — |
 
 Not built yet: the iOS app target, the `send-pushes` and `delete-account` edge functions, the puzzle generator and admin page, and the landing site. Edge functions have not yet been deployed or exercised against a real Supabase project; `CONTACT_PEPPER` must be set as a function secret before `register` or `match-contacts` will run. Build order is in the architecture doc, section 7.
 
