@@ -22,7 +22,14 @@ A daily puzzle app where the leaderboard is made of the contacts in your phone w
 | `apps/ios/` | SwiftUI app target (XcodeGen spec + sources). Builds only on macOS; CI produces an unsigned IPA | `.github/workflows/ios.yml` |
 | `docs/06-deployment-runbook.md` | Every step from repo to phone | — |
 
-Not built yet: the iOS app target, the `send-pushes` and `delete-account` edge functions, the puzzle generator and admin page, and the landing site. Edge functions have not yet been deployed or exercised against a real Supabase project; `CONTACT_PEPPER` must be set as a function secret before `register` or `match-contacts` will run. Build order is in the architecture doc, section 7.
+## Status
+
+Every layer exists and everything that can be tested on a Windows machine is tested. What has **not** happened yet, in order of importance:
+
+1. Nothing is deployed. No Supabase project, no Cloudflare Pages site, no GitHub remote. `docs/06-deployment-runbook.md` is the checklist.
+2. The SwiftUI target has never been compiled. The first CI run on macOS will find whatever the review missed; `apps/ios/Kith/README.md` lists the likeliest spots.
+3. Seed content values have not been human-verified; lists ship `enabled = false` until checked in the admin page.
+4. The edge functions have not been exercised against a live Supabase project (they are tested against in-memory stores and the schema against pglite). Build order is in the architecture doc, section 7.
 
 ## Docs
 

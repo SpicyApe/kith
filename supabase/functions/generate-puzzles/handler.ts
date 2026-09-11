@@ -86,17 +86,25 @@ export function seedFor(date: string, attempt: number): number {
 
 /**
  * True when every adjacent pair in `values` (already in correct order) satisfies
- * `|a - b| >= MIN_ADJACENT_GAP * max(|a|, |b|)`, and no two values are equal.
- * When both values are 0 the pair fails.
+ * EITHER `|a - b| >= MIN_ADJACENT_GAP * max(|a|, |b|)` (the ratio rule) OR
+ * `|a - b| >= MIN_ADJACENT_GAP * listSpan` (the span rule), and no two values
+ * are equal. Ties (`a === b`) always fail, regardless of `listSpan`. `listSpan`
+ * is `max(value) - min(value)` over ALL items of the list (not just the chosen
+ * five); a `listSpan <= 0` disables the span clause, leaving only the ratio rule.
+ * This makes tightly-clustered-but-large lists (e.g. calendar years) viable:
+ * a pair can satisfy either rule even when both absolute values are large and
+ * close together.
  */
-export function gapsOk(values: number[]): boolean {
+export function gapsOk(values: number[], listSpan = 0): boolean {
   for (let i = 0; i + 1 < values.length; i++) {
     const a = values[i];
     const b = values[i + 1];
     if (a === b) return false;
+    const diff = Math.abs(a - b);
     const maxAbs = Math.max(Math.abs(a), Math.abs(b));
-    if (maxAbs === 0) return false;
-    if (Math.abs(a - b) < MIN_ADJACENT_GAP * maxAbs) return false;
+    const ratioOk = maxAbs !== 0 && diff >= MIN_ADJACENT_GAP * maxAbs;
+    const spanOk = listSpan > 0 && diff >= MIN_ADJACENT_GAP * listSpan;
+    if (!ratioOk && !spanOk) return false;
   }
   return true;
 }
@@ -144,7 +152,10 @@ function arraysEqual(a: readonly number[], b: readonly number[]): boolean {
  *    with ≥ 5 items not used within ITEM_COOLDOWN_DAYS. Shuffle with rng(seed) (Fisher–Yates).
  * 3. For each candidate list, up to 200 attempts: choose 5 distinct eligible items by shuffling
  *    the eligible item ids, honour maxNicheItems, sort by value (ascending if list.ascending
- *    else descending) → correctOrder; require gapsOk on the sorted values. Presentation order:
+ *    else descending) → correctOrder; require gapsOk on the sorted values, passing the list's
+ *    span (max value - min value across ALL of that list's items, not just the chosen five) so
+ *    tightly-clustered-but-large lists (e.g. calendar years) can satisfy the span rule even when
+ *    the ratio rule can't. Presentation order:
  *    shuffle correctOrder until it differs from correctOrder (max 20 tries; if it never differs, skip).
  * 4. First success wins. Return null if every list fails.
  * Cooldown comparisons use whole calendar-day differences between YYYY-MM-DD strings (UTC).
@@ -167,6 +178,18 @@ export function generatePuzzle(
     else itemsByList.set(item.listId, [item]);
   }
 
+  const spanFor = (listId: number): number => {
+    const all = itemsByList.get(listId) ?? [];
+    if (all.length === 0) return 0;
+    let min = all[0].value;
+    let max = all[0].value;
+    for (const item of all) {
+      if (item.value < min) min = item.value;
+      if (item.value > max) max = item.value;
+    }
+    return max - min;
+  };
+
   const eligibleItemsFor = (listId: number): ItemRow[] =>
     (itemsByList.get(listId) ?? []).filter(
       (item) => !usedWithin(usage.itemUses.filter((u) => u.itemId === item.id), date, ITEM_COOLDOWN_DAYS),
@@ -184,6 +207,7 @@ export function generatePuzzle(
 
   for (const list of candidateLists) {
     const eligibleItems = eligibleItemsFor(list.id);
+    const listSpan = spanFor(list.id);
 
     attempts: for (let attempt = 0; attempt < 200; attempt++) {
       const shuffled = shuffle(eligibleItems, rand);
@@ -201,7 +225,7 @@ export function generatePuzzle(
 
       const sorted = chosen.slice().sort((a, b) => (list.ascending ? a.value - b.value : b.value - a.value));
       const values = sorted.map((i) => i.value);
-      if (!gapsOk(values)) continue attempts;
+      if (!gapsOk(values, listSpan)) continue attempts;
 
       const correctOrder = sorted.map((i) => i.id) as [number, number, number, number, number];
 

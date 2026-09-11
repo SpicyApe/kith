@@ -764,4 +764,93 @@ if (String(seedRow.rows[0].seed) !== "3298495047") {
 }
 console.log("puzzles.seed: a value beyond int32 range (3298495047) round-trips through the bigint column - OK");
 
+await db.exec(`reset role`);
+
+// ---------------------------------------------------------------------------
+// seed/content.sql: the content-pipeline lists (source-checked, but not yet
+// enabled) load cleanly and idempotently, and every list has enough
+// candidate values for generate-puzzles' gapsOk (ratio-or-span) rule to have
+// a real shot at finding a valid 5-item combination.
+//
+// Run against a FRESH database rather than `db`: the fixtures inserted above
+// reuse ids 1/2 and placeholder source_urls ('u') that would otherwise
+// collide with and pollute these checks (on conflict do nothing would skip
+// real content rows, and the 'u' placeholders would fail the source_url
+// check even though they have nothing to do with the seed file).
+// ---------------------------------------------------------------------------
+const contentDb = new PGlite({ extensions: { pgcrypto } });
+await contentDb.exec(`
+  create schema auth;
+  create table auth.users (id uuid primary key);
+  create function auth.uid() returns uuid language sql stable as
+    $$ select nullif(current_setting('app.uid', true), '')::uuid $$;
+  create role anon nologin;
+  create role authenticated nologin;
+  create role service_role nologin;
+`);
+await contentDb.exec(sql);
+
+const contentSql = fs.readFileSync(new URL("../seed/content.sql", import.meta.url), "utf8");
+await contentDb.exec(contentSql);
+await contentDb.exec(contentSql); // re-applying must be a no-op (on conflict do nothing)
+console.log("seed/content.sql: applied twice (idempotent) - OK");
+
+const seedListsCount = await contentDb.query(`select count(*)::int as n from public.lists`);
+if (seedListsCount.rows[0].n !== 12) {
+  throw new Error(`seed/content.sql: expected 12 lists, got ${seedListsCount.rows[0].n}`);
+}
+
+const seedListRows = await contentDb.query(`select id from public.lists order by id`);
+for (const { id } of seedListRows.rows) {
+  const itemCount = await contentDb.query(`select count(*)::int as n from public.list_items where list_id = ${id}`);
+  if (itemCount.rows[0].n < 18) {
+    throw new Error(`seed/content.sql: list ${id} has only ${itemCount.rows[0].n} items, expected >= 18`);
+  }
+}
+
+const seedEnabledCount = await contentDb.query(`select count(*)::int as n from public.lists where enabled = true`);
+if (seedEnabledCount.rows[0].n !== 0) {
+  throw new Error(`seed/content.sql: expected every seeded list to be enabled=false, found ${seedEnabledCount.rows[0].n} enabled`);
+}
+
+const seedBadUrls = await contentDb.query(
+  `select count(*)::int as n from public.list_items where source_url not like 'https://en.wikipedia.org/wiki/%'`,
+);
+if (seedBadUrls.rows[0].n !== 0) {
+  throw new Error(`seed/content.sql: ${seedBadUrls.rows[0].n} list_items rows have a source_url outside https://en.wikipedia.org/wiki/`);
+}
+console.log("seed/content.sql: 12 lists, each with >= 18 items, all enabled=false, all source_urls on Wikipedia - OK");
+
+// gapsOk proxy: greedily walk each list's values in sorted order, keeping a
+// value when its gap from the last kept value clears the ratio rule OR the
+// span rule — mirroring generate-puzzles/handler.ts's gapsOk(values, listSpan).
+// Keeping >= 5 values means the generator has a real shot at finding a valid
+// 5-item combination for that list.
+const SEED_MIN_ADJACENT_GAP = 0.08;
+for (const { id } of seedListRows.rows) {
+  const valueRows = await contentDb.query(
+    `select value::float8 as value from public.list_items where list_id = ${id} order by value asc`,
+  );
+  const values = valueRows.rows.map((r) => r.value);
+  const span = Math.max(...values) - Math.min(...values);
+
+  let lastKept = values[0];
+  let kept = 1;
+  for (let i = 1; i < values.length; i++) {
+    const v = values[i];
+    const diff = v - lastKept;
+    const ratioOk = diff >= SEED_MIN_ADJACENT_GAP * Math.max(Math.abs(v), Math.abs(lastKept));
+    const spanOk = span > 0 && diff >= SEED_MIN_ADJACENT_GAP * span;
+    if (ratioOk || spanOk) {
+      kept++;
+      lastKept = v;
+    }
+  }
+  console.log(`seed/content.sql: gapsOk proxy kept ${kept} of ${values.length} values for list ${id}`);
+  if (kept < 5) {
+    throw new Error(`seed/content.sql: list ${id} only kept ${kept} values under the gapsOk greedy proxy, expected >= 5`);
+  }
+}
+console.log("seed/content.sql: every list keeps >= 5 values under the gapsOk greedy proxy - OK");
+
 console.log("\nALL SCHEMA CHECKS PASSED");

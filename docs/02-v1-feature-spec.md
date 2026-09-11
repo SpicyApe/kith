@@ -64,7 +64,7 @@ One row per try, five squares per row, streak flame with count, permalink with t
 - **Generator** (runs 30 days ahead, nightly):
   1. Pick a list not used in the last 21 days, honouring a weekday difficulty rhythm (Mon–Tue easy, Wed–Thu medium, Fri hard, Sat–Sun medium).
   2. Pick 5 items not used in the last 90 days.
-  3. Enforce constraints: every adjacent pair of values differs by at least 8% (no coin-flip pairs); at most one familiarity-3 item on easy days, at most three on hard days.
+  3. Enforce constraints: every adjacent pair of values differs by at least 8% of the larger value or 8% of the list's whole range, whichever is easier to meet (no coin-flip pairs; years work because the range rule applies); at most one familiarity-3 item on easy days, at most three on hard days.
   4. Emit a puzzle row with items, correct order, and a one-line reveal fact per item.
 - **Review queue:** a minimal admin web page listing the next 30 puzzles with Approve / Reseed / Edit. Nothing ships unreviewed. About one evening of the author's time per month.
 - **LLM use:** allowed for *drafting* new lists and reveal facts, which a human source-checks before they enter the dataset. Never used to generate a live puzzle. Facts on screen always carry a source.

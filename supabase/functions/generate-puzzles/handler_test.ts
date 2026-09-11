@@ -12,6 +12,7 @@ import {
   LIST_COOLDOWN_DAYS,
   type ListRow,
   maxNicheItems,
+  MIN_ADJACENT_GAP,
   rng,
   seedFor,
   type Usage,
@@ -111,6 +112,29 @@ Deno.test("gapsOk - fails when both values in a pair are 0", () => {
 Deno.test("gapsOk - passes with negative values, using |max| for the ratio", () => {
   // |-110 - (-100)| = 10; max(|-110|,|-100|) = 110; 10/110 ~= 9.09% >= 8%.
   assertEquals(gapsOk([-110, -100]), true);
+});
+
+// --- gapsOk: listSpan (span rule) ---
+//
+// The span rule lets an adjacent pair pass when its gap clears 8% of the
+// *whole list's* range, even if it's nowhere near 8% of the pair's own
+// values (which is what makes calendar-year lists usable).
+
+Deno.test("gapsOk - span rule passes a list whose ratio rule fails but every gap clears 8% of the list span", () => {
+  // Ratio rule alone fails throughout: 8% of ~1990 is ~159, far above any of
+  // these gaps (20, 25, 20, 25). Span rule: 8% of listSpan=200 is 16, and
+  // every gap here is >= 20, so the span rule carries all three pairs.
+  assertEquals(gapsOk([1900, 1920, 1945, 1965, 1990], 200), true);
+});
+
+Deno.test("gapsOk - the same values fail once the span rule is disabled (listSpan 0)", () => {
+  assertEquals(gapsOk([1900, 1920, 1945, 1965, 1990], 0), false);
+});
+
+Deno.test("gapsOk - span rule still fails a pair whose gap is below 8% of the span", () => {
+  // First pair gap is 5 (1905 - 1900); 8% of listSpan=200 is 16; 5 < 16 fails
+  // the span rule, and also fails the ratio rule (8% of 1905 ~= 152.4).
+  assertEquals(gapsOk([1900, 1905, 1925, 1950, 1990], 200), false);
 });
 
 // ---------------------------------------------------------------------------
@@ -280,7 +304,15 @@ const TIGHT_LIST: ListRow = {
   ascending: true,
   enabled: true,
 };
-const TIGHT_ITEMS: ItemRow[] = [100, 101, 102, 103, 104, 105].map((v, i) => ({
+// Duplicate values, not merely close ones: with the span rule in play, a list
+// with a small enough listSpan (max-min across ALL its items) makes even
+// tightly-packed-but-distinct values (like 100..105, listSpan=5) satisfiable
+// via 8% of that tiny span. Ties are the one gap failure the span rule can
+// never rescue (gapsOk always fails a === b), so use those here instead.
+// Only 3 distinct values (100, 101, 102), each duplicated: any 5 of these 6
+// items must include both copies of at least two values, guaranteeing a tied
+// adjacent pair once sorted.
+const TIGHT_ITEMS: ItemRow[] = [100, 100, 101, 101, 102, 102].map((v, i) => ({
   id: 400 + i,
   listId: 4,
   label: `tight-${i}`,
@@ -288,9 +320,44 @@ const TIGHT_ITEMS: ItemRow[] = [100, 101, 102, 103, 104, 105].map((v, i) => ({
   familiarity: 1,
 }));
 
-Deno.test("generatePuzzle - gapsOk failures make a list unusable: tightly-packed values (100..105) return null", () => {
+Deno.test("generatePuzzle - gapsOk failures make a list unusable: duplicate values (ties always fail) return null", () => {
   const p = generatePuzzle(MONDAY, [TIGHT_LIST], TIGHT_ITEMS, emptyUsage(), seedFor(MONDAY, 0));
   assertEquals(p, null);
+});
+
+// A calendar-year list: adjacent years are far too close together to ever
+// clear 8% of their own value (the ratio rule), which used to make lists
+// like this un-puzzleable. The span rule (8% of the list's whole range)
+// fixes that.
+const YEARS_LIST: ListRow = {
+  id: 5,
+  promptTemplate: "Order these by the year they were invented",
+  direction: "Earliest at the top",
+  ascending: true,
+  enabled: true,
+};
+const YEARS_VALUES = [1817, 1839, 1876, 1879, 1885, 1903, 1913, 1928, 1946, 1971];
+const YEARS_ITEMS: ItemRow[] = YEARS_VALUES.map((v, i) => ({
+  id: 500 + i,
+  listId: 5,
+  label: `year-item-${i}`,
+  value: v,
+  familiarity: 1,
+}));
+
+Deno.test("generatePuzzle - a calendar-year list succeeds via the span rule; chosen values clear 8% of the list's span", () => {
+  const p = generatePuzzle(MONDAY, [YEARS_LIST], YEARS_ITEMS, emptyUsage(), seedFor(MONDAY, 0));
+  assert(p !== null);
+
+  const listSpan = Math.max(...YEARS_VALUES) - Math.min(...YEARS_VALUES); // 1971 - 1817 = 154
+  const sortedValues = p!.correctOrder.map((id) => YEARS_ITEMS.find((it) => it.id === id)!.value);
+  for (let i = 0; i + 1 < sortedValues.length; i++) {
+    const gap = sortedValues[i + 1] - sortedValues[i];
+    assert(
+      gap >= MIN_ADJACENT_GAP * listSpan,
+      `gap ${gap} between ${sortedValues[i]} and ${sortedValues[i + 1]} is below 8% of the list span (${listSpan})`,
+    );
+  }
 });
 
 Deno.test("generatePuzzle - returns null when there are no candidate lists at all", () => {
