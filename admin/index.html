@@ -1,0 +1,797 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kith Admin</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --border: #dde1e6;
+    --text: #1c2126;
+    --muted: #5c6570;
+    --accent: #2f6feb;
+    --accent-text: #ffffff;
+    --danger: #b3261e;
+    --ok: #1e7a34;
+    --ok-bg: #e5f5e8;
+    --pending-bg: #fdf1d6;
+    --pending-text: #8a5a00;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.4;
+  }
+  #topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  #topbar h1 { font-size: 18px; margin: 0; }
+  #user-info { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+  main { padding: 20px; max-width: 1400px; margin: 0 auto; }
+  #auth-view .card {
+    max-width: 360px;
+    margin: 60px auto;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+  }
+  #auth-view h2 { margin-top: 0; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; margin-top: 12px; }
+  input[type="tel"], input[type="text"], select, textarea {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 14px;
+    background: #fff;
+    color: var(--text);
+  }
+  button {
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.primary, #btn-send-otp, #btn-verify-otp, #btn-generate30 {
+    background: var(--accent);
+    color: var(--accent-text);
+    border-color: var(--accent);
+  }
+  .btn-small { padding: 5px 10px; font-size: 12px; margin-right: 6px; }
+  #tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab-btn { border-radius: 6px 6px 0 0; }
+  .tab-btn.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+  .table-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; min-width: 900px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: #f0f2f5; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); white-space: nowrap; }
+  .prompt-cell { max-width: 220px; }
+  .items-cell { max-width: 320px; }
+  .item-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #eef1f5;
+    border-radius: 12px;
+    padding: 2px 8px;
+    margin: 2px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+  .pill-pending { background: var(--pending-bg); color: var(--pending-text); }
+  .pill-approved { background: var(--ok-bg); color: var(--ok); }
+  .actions-cell { white-space: nowrap; }
+  .edit-row td { background: #fafbfc; }
+  .edit-wrap { padding: 10px 4px; }
+  .edit-slots { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 10px; }
+  .edit-slot { min-width: 180px; }
+  .edit-slot label { margin-top: 0; }
+  .edit-warning { color: var(--danger); background: #fbe9e7; border: 1px solid var(--danger); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; font-size: 13px; }
+  .edit-actions { display: flex; gap: 8px; }
+  .list-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; }
+  .list-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  .list-prompt { font-weight: 600; }
+  .list-meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .list-controls { display: flex; align-items: center; gap: 12px; }
+  .toggle-label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
+  .toggle-label input { width: auto; }
+  #status-bar { position: sticky; bottom: 0; background: var(--panel); border-top: 1px solid var(--border); padding: 8px 20px; font-size: 12px; color: var(--muted); }
+  #status-text.error { color: var(--danger); font-weight: 600; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <header id="topbar">
+    <h1>Kith Admin</h1>
+    <div id="user-info" hidden>
+      <span id="user-phone"></span>
+      <button id="btn-signout">Sign out</button>
+    </div>
+  </header>
+
+  <main id="auth-view">
+    <div class="card">
+      <h2>Sign in</h2>
+      <div id="phone-step">
+        <label for="phone-input">Phone number (E.164, e.g. +15551234567)</label>
+        <input id="phone-input" type="tel" placeholder="+15551234567" autocomplete="tel" />
+        <button id="btn-send-otp" style="margin-top:12px;">Send code</button>
+      </div>
+      <div id="otp-step" hidden>
+        <label for="otp-input">6-digit code</label>
+        <input id="otp-input" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
+        <button id="btn-verify-otp" style="margin-top:12px;">Verify</button>
+      </div>
+    </div>
+  </main>
+
+  <main id="main-view" hidden>
+    <nav id="tabs">
+      <button class="tab-btn active" data-tab="queue">Review Queue</button>
+      <button class="tab-btn" data-tab="lists">Lists</button>
+    </nav>
+
+    <section id="queue-view" class="tab-panel">
+      <div class="toolbar">
+        <button id="btn-generate30">Generate 30 days</button>
+        <button id="btn-reload-queue">Reload</button>
+      </div>
+      <div class="table-wrap">
+        <table id="queue-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>#</th>
+              <th>Status</th>
+              <th>Difficulty</th>
+              <th>Prompt</th>
+              <th>Items (presentation)</th>
+              <th>Correct order</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="queue-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="lists-view" class="tab-panel" hidden>
+      <div class="toolbar">
+        <button id="btn-reload-lists">Reload</button>
+      </div>
+      <div id="lists-container"></div>
+    </section>
+  </main>
+
+  <footer id="status-bar"><span id="status-text"></span></footer>
+
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.116.0";
+
+// Fill these in for your Supabase project before deploying this page.
+const SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";
+const SUPABASE_ANON_KEY = "YOUR-ANON-KEY";
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// --- DOM references ---------------------------------------------------
+const authView = document.getElementById("auth-view");
+const mainView = document.getElementById("main-view");
+const userInfo = document.getElementById("user-info");
+const userPhone = document.getElementById("user-phone");
+const btnSignout = document.getElementById("btn-signout");
+
+const phoneStep = document.getElementById("phone-step");
+const otpStep = document.getElementById("otp-step");
+const phoneInput = document.getElementById("phone-input");
+const otpInput = document.getElementById("otp-input");
+const btnSendOtp = document.getElementById("btn-send-otp");
+const btnVerifyOtp = document.getElementById("btn-verify-otp");
+
+const tabBtns = Array.from(document.querySelectorAll(".tab-btn"));
+const queueView = document.getElementById("queue-view");
+const listsView = document.getElementById("lists-view");
+const queueTbody = document.getElementById("queue-tbody");
+const listsContainer = document.getElementById("lists-container");
+const btnGenerate30 = document.getElementById("btn-generate30");
+const btnReloadQueue = document.getElementById("btn-reload-queue");
+const btnReloadLists = document.getElementById("btn-reload-lists");
+const statusText = document.getElementById("status-text");
+
+// --- State --------------------------------------------------------------
+let session = null;
+let listItemsCache = new Map(); // listId -> item rows
+let listsLoadedOnce = false;
+
+function setStatus(msg, isError) {
+  statusText.textContent = msg;
+  statusText.className = isError ? "error" : "";
+}
+
+function ce(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+// --- Auth -----------------------------------------------------------------
+async function init() {
+  const { data } = await supabase.auth.getSession();
+  if (data && data.session) {
+    session = data.session;
+    await afterSignIn();
+  }
+}
+
+async function afterSignIn() {
+  setStatus("Checking admin access...");
+  const { data, error } = await supabase.rpc("is_admin");
+  if (error) {
+    setStatus("Error checking admin status: " + error.message, true);
+    return;
+  }
+  if (data !== true) {
+    setStatus("This account is not an admin.", true);
+    await supabase.auth.signOut();
+    session = null;
+    return;
+  }
+  authView.hidden = true;
+  mainView.hidden = false;
+  userInfo.hidden = false;
+  userPhone.textContent = (session.user && (session.user.phone || session.user.email)) || "";
+  setStatus("Signed in.");
+  await loadQueue();
+}
+
+btnSendOtp.addEventListener("click", async () => {
+  const phone = phoneInput.value.trim();
+  if (!phone) {
+    setStatus("Enter a phone number.", true);
+    return;
+  }
+  setStatus("Sending code...");
+  const { error } = await supabase.auth.signInWithOtp({ phone });
+  if (error) {
+    setStatus("Failed to send code: " + error.message, true);
+    return;
+  }
+  phoneStep.hidden = true;
+  otpStep.hidden = false;
+  setStatus("Code sent. Enter it below.");
+});
+
+btnVerifyOtp.addEventListener("click", async () => {
+  const phone = phoneInput.value.trim();
+  const token = otpInput.value.trim();
+  if (!token) {
+    setStatus("Enter the code.", true);
+    return;
+  }
+  setStatus("Verifying...");
+  const { data, error } = await supabase.auth.verifyOtp({ phone, token, type: "sms" });
+  if (error) {
+    setStatus("Verification failed: " + error.message, true);
+    return;
+  }
+  session = data.session;
+  await afterSignIn();
+});
+
+btnSignout.addEventListener("click", async () => {
+  await supabase.auth.signOut();
+  session = null;
+  mainView.hidden = true;
+  userInfo.hidden = true;
+  authView.hidden = false;
+  phoneStep.hidden = false;
+  otpStep.hidden = true;
+  phoneInput.value = "";
+  otpInput.value = "";
+  setStatus("Signed out.");
+});
+
+// --- Tabs -------------------------------------------------------------
+tabBtns.forEach((btn) => {
+  btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+});
+
+function switchTab(tab) {
+  tabBtns.forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  queueView.hidden = tab !== "queue";
+  listsView.hidden = tab !== "lists";
+  if (tab === "lists" && !listsLoadedOnce) {
+    listsLoadedOnce = true;
+    loadLists();
+  }
+}
+
+// --- Queue view ---------------------------------------------------------
+async function loadQueue() {
+  setStatus("Loading queue...");
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: puzzles, error } = await supabase
+    .from("puzzles")
+    .select("*")
+    .gte("date", today)
+    .order("date")
+    .limit(30);
+  if (error) {
+    setStatus("Failed to load puzzles: " + error.message, true);
+    return;
+  }
+  const { data: lists, error: listsErr } = await supabase.from("lists").select("*");
+  if (listsErr) {
+    setStatus("Failed to load lists: " + listsErr.message, true);
+    return;
+  }
+  const listsById = new Map(lists.map((l) => [l.id, l]));
+
+  const allItemIds = Array.from(new Set(puzzles.flatMap((p) => p.item_ids)));
+  let itemsById = new Map();
+  if (allItemIds.length) {
+    const { data: items, error: itemsErr } = await supabase
+      .from("list_items")
+      .select("*")
+      .in("id", allItemIds);
+    if (itemsErr) {
+      setStatus("Failed to load items: " + itemsErr.message, true);
+      return;
+    }
+    itemsById = new Map(items.map((i) => [i.id, i]));
+  }
+
+  renderQueue(puzzles, listsById, itemsById);
+  setStatus("Loaded " + puzzles.length + " puzzle(s).");
+}
+
+function renderQueue(puzzles, listsById, itemsById) {
+  queueTbody.textContent = "";
+  for (const p of puzzles) {
+    const list = listsById.get(p.list_id);
+    const tr = document.createElement("tr");
+
+    tr.appendChild(ce("td", null, p.date));
+    tr.appendChild(ce("td", null, String(p.number)));
+
+    const statusTd = document.createElement("td");
+    statusTd.appendChild(ce("span", "pill pill-" + p.status, p.status));
+    tr.appendChild(statusTd);
+
+    tr.appendChild(ce("td", null, p.difficulty));
+
+    tr.appendChild(
+      ce(
+        "td",
+        "prompt-cell",
+        list ? list.prompt_template + " (" + list.direction + ")" : "list #" + p.list_id
+      )
+    );
+
+    const itemsTd = document.createElement("td");
+    itemsTd.className = "items-cell";
+    (p.item_ids || []).forEach((id) => {
+      const it = itemsById.get(id);
+      const chip = ce("span", "item-chip", it ? it.label + " · " + it.value : "#" + id);
+      if (it && it.fact) chip.title = it.fact;
+      itemsTd.appendChild(chip);
+    });
+    tr.appendChild(itemsTd);
+
+    const correctTd = document.createElement("td");
+    correctTd.className = "items-cell";
+    (p.correct_order || []).forEach((id, idx) => {
+      const it = itemsById.get(id);
+      const chip = document.createElement("span");
+      chip.className = "item-chip";
+      chip.appendChild(ce("span", "badge", String(idx + 1)));
+      chip.appendChild(document.createTextNode(it ? it.label : "#" + id));
+      if (it && it.fact) chip.title = it.fact;
+      correctTd.appendChild(chip);
+    });
+    tr.appendChild(correctTd);
+
+    const actionsTd = document.createElement("td");
+    actionsTd.className = "actions-cell";
+
+    const approveBtn = ce("button", "btn-small", "Approve");
+    approveBtn.disabled = p.status === "approved";
+    approveBtn.addEventListener("click", () => approvePuzzle(p.date));
+    actionsTd.appendChild(approveBtn);
+
+    const reseedBtn = ce("button", "btn-small", "Reseed");
+    reseedBtn.disabled = p.status === "approved";
+    reseedBtn.addEventListener("click", () => reseedPuzzle(p.date));
+    actionsTd.appendChild(reseedBtn);
+
+    const editBtn = ce("button", "btn-small", "Edit");
+    editBtn.addEventListener("click", () => toggleEditRow(tr, p, list));
+    actionsTd.appendChild(editBtn);
+
+    tr.appendChild(actionsTd);
+    queueTbody.appendChild(tr);
+  }
+}
+
+async function approvePuzzle(date) {
+  setStatus("Approving " + date + "...");
+  const { error } = await supabase.from("puzzles").update({ status: "approved" }).eq("date", date);
+  if (error) {
+    setStatus("Approve failed for " + date + ": " + error.message, true);
+    return;
+  }
+  setStatus("Approved " + date + ".");
+  await loadQueue();
+}
+
+async function reseedPuzzle(date) {
+  if (!session) {
+    setStatus("Not signed in.", true);
+    return;
+  }
+  setStatus("Reseeding " + date + "...");
+  let body = {};
+  try {
+    const res = await fetch(SUPABASE_URL + "/functions/v1/generate-puzzles", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + session.access_token,
+        apikey: SUPABASE_ANON_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ date }),
+    });
+    body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setStatus("Reseed failed for " + date + ": " + (body.error || res.status), true);
+      return;
+    }
+  } catch (e) {
+    setStatus("Reseed error for " + date + ": " + e.message, true);
+    return;
+  }
+  setStatus("Reseeded " + date + ".");
+  await loadQueue();
+}
+
+btnGenerate30.addEventListener("click", async () => {
+  if (!session) {
+    setStatus("Not signed in.", true);
+    return;
+  }
+  setStatus("Generating 30 days ahead...");
+  let body = {};
+  try {
+    const res = await fetch(SUPABASE_URL + "/functions/v1/generate-puzzles", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + session.access_token,
+        apikey: SUPABASE_ANON_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ daysAhead: 30 }),
+    });
+    body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setStatus("Generate failed: " + (body.error || res.status), true);
+      return;
+    }
+  } catch (e) {
+    setStatus("Generate error: " + e.message, true);
+    return;
+  }
+  const created = (body.created || []).length;
+  const replaced = (body.replaced || []).length;
+  const skipped = (body.skipped || []).length;
+  setStatus("Generate complete: " + created + " created, " + replaced + " replaced, " + skipped + " skipped.");
+  await loadQueue();
+});
+
+btnReloadQueue.addEventListener("click", () => loadQueue());
+btnReloadLists.addEventListener("click", () => loadLists());
+
+// --- Inline edit row ------------------------------------------------------
+async function getListItems(listId) {
+  if (listItemsCache.has(listId)) return listItemsCache.get(listId);
+  const { data, error } = await supabase
+    .from("list_items")
+    .select("*")
+    .eq("list_id", listId)
+    .order("label");
+  if (error) {
+    setStatus("Failed to load items for list " + listId + ": " + error.message, true);
+    return [];
+  }
+  listItemsCache.set(listId, data);
+  return data;
+}
+
+async function toggleEditRow(tr, p, list) {
+  const existing = tr.nextElementSibling;
+  if (existing && existing.classList.contains("edit-row")) {
+    existing.remove();
+    return;
+  }
+  document.querySelectorAll(".edit-row").forEach((r) => r.remove());
+
+  if (!list) {
+    setStatus("Cannot edit " + p.date + ": list #" + p.list_id + " not found.", true);
+    return;
+  }
+
+  const editTr = document.createElement("tr");
+  editTr.className = "edit-row";
+  const editTd = document.createElement("td");
+  editTd.colSpan = 8;
+  editTr.appendChild(editTd);
+  const wrap = document.createElement("div");
+  wrap.className = "edit-wrap";
+  wrap.appendChild(ce("div", null, "Loading list items..."));
+  editTd.appendChild(wrap);
+  tr.after(editTr);
+
+  const listItems = await getListItems(p.list_id);
+  wrap.textContent = "";
+
+  if (!listItems.length) {
+    wrap.appendChild(ce("div", "edit-warning", "No items found for this list."));
+    return;
+  }
+
+  const selects = [];
+  const slotsDiv = document.createElement("div");
+  slotsDiv.className = "edit-slots";
+  for (let i = 0; i < 5; i++) {
+    const slotDiv = document.createElement("div");
+    slotDiv.className = "edit-slot";
+    slotDiv.appendChild(ce("label", null, "Slot " + (i + 1)));
+    const select = document.createElement("select");
+    for (const it of listItems) {
+      const opt = document.createElement("option");
+      opt.value = String(it.id);
+      opt.textContent = it.label + " · " + it.value;
+      select.appendChild(opt);
+    }
+    const currentId = p.item_ids[i];
+    if (currentId != null && listItems.some((it) => it.id === currentId)) {
+      select.value = String(currentId);
+    }
+    slotDiv.appendChild(select);
+    slotsDiv.appendChild(slotDiv);
+    selects.push(select);
+  }
+  wrap.appendChild(slotsDiv);
+
+  const warnDiv = ce("div", "edit-warning");
+  warnDiv.hidden = true;
+  wrap.appendChild(warnDiv);
+
+  const btnRow = document.createElement("div");
+  btnRow.className = "edit-actions";
+  const saveBtn = ce("button", "btn-small primary", "Save");
+  const shuffleBtn = ce("button", "btn-small", "Shuffle");
+  shuffleBtn.hidden = true;
+  const cancelBtn = ce("button", "btn-small", "Cancel");
+  btnRow.appendChild(saveBtn);
+  btnRow.appendChild(shuffleBtn);
+  btnRow.appendChild(cancelBtn);
+  wrap.appendChild(btnRow);
+
+  cancelBtn.addEventListener("click", () => editTr.remove());
+
+  function currentSelection() {
+    return selects.map((s) => Number(s.value));
+  }
+
+  function computeCorrectOrder(ids) {
+    const chosen = ids.map((id) => listItems.find((it) => it.id === id)).filter(Boolean);
+    const sorted = chosen
+      .slice()
+      .sort((a, b) => (list.ascending ? a.value - b.value : b.value - a.value));
+    return sorted.map((it) => it.id);
+  }
+
+  async function doSave(force) {
+    const ids = currentSelection();
+    if (new Set(ids).size !== 5) {
+      warnDiv.hidden = false;
+      warnDiv.textContent = "Duplicate items selected — choose five distinct items.";
+      shuffleBtn.hidden = true;
+      return;
+    }
+    const correctOrder = computeCorrectOrder(ids);
+    const sameOrder = ids.every((id, i) => id === correctOrder[i]);
+    if (sameOrder && !force) {
+      warnDiv.hidden = false;
+      warnDiv.textContent =
+        "Presentation order already equals the correct order — the puzzle would start solved. Shuffle or reorder the slots.";
+      shuffleBtn.hidden = false;
+      return;
+    }
+    warnDiv.hidden = true;
+    shuffleBtn.hidden = true;
+    saveBtn.disabled = true;
+    setStatus("Saving " + p.date + "...");
+    const { error } = await supabase
+      .from("puzzles")
+      .update({ item_ids: ids, correct_order: correctOrder })
+      .eq("date", p.date);
+    saveBtn.disabled = false;
+    if (error) {
+      setStatus("Save failed for " + p.date + ": " + error.message, true);
+      return;
+    }
+    setStatus("Saved " + p.date + ".");
+    editTr.remove();
+    await loadQueue();
+  }
+
+  saveBtn.addEventListener("click", () => doSave(false));
+  shuffleBtn.addEventListener("click", () => {
+    const ids = currentSelection();
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = ids[i];
+      ids[i] = ids[j];
+      ids[j] = tmp;
+    }
+    selects.forEach((s, i) => {
+      s.value = String(ids[i]);
+    });
+    warnDiv.hidden = true;
+    shuffleBtn.hidden = true;
+  });
+}
+
+// --- Lists view -----------------------------------------------------------
+async function loadLists() {
+  setStatus("Loading lists...");
+  const { data: lists, error } = await supabase.from("lists").select("*").order("id");
+  if (error) {
+    setStatus("Failed to load lists: " + error.message, true);
+    return;
+  }
+  const { data: items, error: itemsErr } = await supabase
+    .from("list_items")
+    .select("*")
+    .order("list_id")
+    .order("label");
+  if (itemsErr) {
+    setStatus("Failed to load items: " + itemsErr.message, true);
+    return;
+  }
+  const itemsByList = new Map();
+  for (const it of items) {
+    if (!itemsByList.has(it.list_id)) itemsByList.set(it.list_id, []);
+    itemsByList.get(it.list_id).push(it);
+  }
+  listItemsCache = new Map(itemsByList);
+  renderLists(lists, itemsByList);
+  setStatus("Loaded " + lists.length + " list(s).");
+}
+
+async function setListEnabled(id, enabled) {
+  setStatus("Updating list " + id + "...");
+  const { error } = await supabase.from("lists").update({ enabled }).eq("id", id);
+  if (error) {
+    setStatus("Update failed for list " + id + ": " + error.message, true);
+    return;
+  }
+  setStatus("List " + id + (enabled ? " enabled." : " disabled."));
+}
+
+function renderLists(lists, itemsByList) {
+  listsContainer.textContent = "";
+  for (const l of lists) {
+    const items = itemsByList.get(l.id) || [];
+    const card = document.createElement("div");
+    card.className = "list-card";
+
+    const headerRow = document.createElement("div");
+    headerRow.className = "list-card-header";
+
+    const info = document.createElement("div");
+    info.className = "list-info";
+    info.appendChild(ce("div", "list-prompt", l.prompt_template));
+    info.appendChild(
+      ce(
+        "div",
+        "list-meta",
+        "Unit: " + l.unit + " · Direction: " + l.direction + " · " + items.length + " item(s)"
+      )
+    );
+    headerRow.appendChild(info);
+
+    const controls = document.createElement("div");
+    controls.className = "list-controls";
+    const toggleLabel = document.createElement("label");
+    toggleLabel.className = "toggle-label";
+    const toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.checked = l.enabled;
+    toggle.addEventListener("change", () => setListEnabled(l.id, toggle.checked));
+    toggleLabel.appendChild(toggle);
+    toggleLabel.appendChild(document.createTextNode("Enabled"));
+    controls.appendChild(toggleLabel);
+
+    const expandBtn = ce("button", "btn-small", "Show items");
+    controls.appendChild(expandBtn);
+    headerRow.appendChild(controls);
+    card.appendChild(headerRow);
+
+    const itemsWrap = document.createElement("div");
+    itemsWrap.className = "table-wrap";
+    itemsWrap.hidden = true;
+    itemsWrap.style.marginTop = "10px";
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    ["Label", "Value", "Familiarity", "Source", "Fact"].forEach((h) => headRow.appendChild(ce("th", null, h)));
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    for (const it of items) {
+      const row = document.createElement("tr");
+      row.appendChild(ce("td", null, it.label));
+      row.appendChild(ce("td", null, String(it.value)));
+      row.appendChild(ce("td", null, String(it.familiarity)));
+      const srcTd = document.createElement("td");
+      const a = document.createElement("a");
+      a.href = it.source_url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = it.source_url;
+      srcTd.appendChild(a);
+      row.appendChild(srcTd);
+      row.appendChild(ce("td", null, it.fact || ""));
+      tbody.appendChild(row);
+    }
+    table.appendChild(tbody);
+    itemsWrap.appendChild(table);
+    card.appendChild(itemsWrap);
+
+    expandBtn.addEventListener("click", () => {
+      itemsWrap.hidden = !itemsWrap.hidden;
+      expandBtn.textContent = itemsWrap.hidden ? "Show items" : "Hide items";
+    });
+
+    listsContainer.appendChild(card);
+  }
+}
+
+init();
+</script>
+</body>
+</html>
