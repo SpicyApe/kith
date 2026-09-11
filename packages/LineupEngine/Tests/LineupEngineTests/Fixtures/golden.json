@@ -1,0 +1,112 @@
+{
+  "cases": [
+    {
+      "name": "one_try_solve",
+      "correctOrder": [1, 2, 3, 4, 5],
+      "attempts": [
+        { "order": [1, 2, 3, 4, 5], "elapsedMs": 7000, "feedback": ["correct", "correct", "correct", "correct", "correct"] }
+      ],
+      "tries": 1,
+      "solved": true,
+      "elapsedMs": 7000,
+      "score": 986,
+      "share": {
+        "puzzleNumber": 200,
+        "streak": 3,
+        "refCode": "AB12",
+        "text": "Kith #200 · 1/3 · 0:07 🔥3\n🟩🟩🟩🟩🟩\nkith.app/p/200?r=AB12"
+      }
+    },
+    {
+      "name": "two_try_solve",
+      "correctOrder": [1, 2, 3, 4, 5],
+      "attempts": [
+        { "order": [1, 2, 4, 3, 5], "elapsedMs": 10000, "feedback": ["correct", "correct", "near", "near", "correct"] },
+        { "order": [1, 2, 3, 4, 5], "elapsedMs": 15000, "feedback": ["correct", "correct", "correct", "correct", "correct"] }
+      ],
+      "tries": 2,
+      "solved": true,
+      "elapsedMs": 15000,
+      "score": 670,
+      "share": {
+        "puzzleNumber": 142,
+        "streak": 12,
+        "refCode": "7F3Q",
+        "text": "Kith #142 · 2/3 · 0:15 🔥12\n🟩🟩🟨🟨🟩\n🟩🟩🟩🟩🟩\nkith.app/p/142?r=7F3Q"
+      }
+    },
+    {
+      "name": "three_try_solve",
+      "correctOrder": [1, 2, 3, 4, 5],
+      "attempts": [
+        { "order": [2, 3, 1, 4, 5], "elapsedMs": 1000, "feedback": ["near", "near", "wrong", "correct", "correct"] },
+        { "order": [3, 1, 2, 4, 5], "elapsedMs": 2000, "feedback": ["wrong", "near", "near", "correct", "correct"] },
+        { "order": [1, 2, 3, 4, 5], "elapsedMs": 3000, "feedback": ["correct", "correct", "correct", "correct", "correct"] }
+      ],
+      "tries": 3,
+      "solved": true,
+      "elapsedMs": 3000,
+      "score": 394,
+      "share": {
+        "puzzleNumber": 50,
+        "streak": 1,
+        "refCode": "Q1Z9",
+        "text": "Kith #50 · 3/3 · 0:03 🔥1\n🟨🟨⬜🟩🟩\n⬜🟨🟨🟩🟩\n🟩🟩🟩🟩🟩\nkith.app/p/50?r=Q1Z9"
+      }
+    },
+    {
+      "name": "fail",
+      "correctOrder": [1, 2, 3, 4, 5],
+      "attempts": [
+        { "order": [2, 3, 4, 5, 1], "elapsedMs": 10000, "feedback": ["near", "near", "near", "near", "wrong"] },
+        { "order": [3, 4, 5, 1, 2], "elapsedMs": 20000, "feedback": ["wrong", "wrong", "wrong", "wrong", "wrong"] },
+        { "order": [4, 5, 1, 2, 3], "elapsedMs": 30000, "feedback": ["wrong", "wrong", "wrong", "wrong", "wrong"] }
+      ],
+      "tries": 3,
+      "solved": false,
+      "elapsedMs": 30000,
+      "score": 100,
+      "share": {
+        "puzzleNumber": 77,
+        "streak": 4,
+        "refCode": "FAIL01",
+        "text": "Kith #77 · X/3 · 0:30 🔥4\n🟨🟨🟨🟨⬜\n⬜⬜⬜⬜⬜\n⬜⬜⬜⬜⬜\nkith.app/p/77?r=FAIL01"
+      }
+    },
+    {
+      "name": "streak_zero_no_refcode",
+      "correctOrder": [1, 2, 3, 4, 5],
+      "attempts": [
+        { "order": [1, 2, 3, 4, 5], "elapsedMs": 500, "feedback": ["correct", "correct", "correct", "correct", "correct"] }
+      ],
+      "tries": 1,
+      "solved": true,
+      "elapsedMs": 500,
+      "score": 1000,
+      "share": {
+        "puzzleNumber": 9,
+        "streak": 0,
+        "refCode": null,
+        "text": "Kith #9 · 1/3 · 0:00\n🟩🟩🟩🟩🟩\nkith.app/p/9"
+      }
+    },
+    {
+      "name": "near_miss_edges",
+      "correctOrder": [1, 2, 3, 4, 5],
+      "attempts": [
+        { "order": [2, 1, 3, 5, 4], "elapsedMs": 8000, "feedback": ["near", "near", "correct", "near", "near"] },
+        { "order": [1, 2, 3, 4, 5], "elapsedMs": 12000, "feedback": ["correct", "correct", "correct", "correct", "correct"] }
+      ],
+      "tries": 2,
+      "solved": true,
+      "elapsedMs": 12000,
+      "score": 676,
+      "share": {
+        "puzzleNumber": 33,
+        "streak": 1,
+        "refCode": "ZZ99",
+        "text": "Kith #33 · 2/3 · 0:12 🔥1\n🟨🟨🟩🟨🟨\n🟩🟩🟩🟩🟩\nkith.app/p/33?r=ZZ99"
+      }
+    }
+  ]
+}

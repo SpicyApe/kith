@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+*.xcuserstate
+node_modules/
+.DS_Store
+.env
+.env.*
+supabase/.temp/
