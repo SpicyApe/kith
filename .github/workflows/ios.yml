@@ -40,14 +40,23 @@ jobs:
       - name: Pick a simulator
         id: sim
         run: |
-          name=$(xcrun simctl list devices available | grep -E "iPhone 1[5-7]( Pro)?( Max)? \(" | head -1 | sed -E 's/^ *([^(]+) \(.*/\1/')
-          echo "name=${name:-iPhone 16}" >> "$GITHUB_OUTPUT"
-          echo "Using simulator: ${name:-iPhone 16}"
+          # First available iPhone on the newest iOS runtime the selected Xcode can use.
+          udid=$(xcrun simctl list devices available --json | jq -r '
+            .devices | to_entries
+            | map(select(.key | contains("iOS")))
+            | sort_by(.key) | reverse
+            | map(.value[] | select(.isAvailable and (.name | startswith("iPhone"))))
+            | .[0].udid // empty')
+          if [ -z "$udid" ]; then
+            echo "No available iPhone simulator"; xcrun simctl list devices available; exit 1
+          fi
+          xcrun simctl list devices available | grep "$udid"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
       - name: Test
         working-directory: apps/ios
         run: |
           xcodebuild test -project Kith.xcodeproj -scheme Kith \
-            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -quiet
       - name: Upload test results
