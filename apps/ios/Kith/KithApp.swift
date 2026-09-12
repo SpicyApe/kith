@@ -53,10 +53,17 @@ struct KithApp: App {
             let state = FakeKithAPI.State(name: UITesting.stateName)
             let directory = FileManager.default.temporaryDirectory
                 .appendingPathComponent(UUID().uuidString)
+            let store = FileStore(directory: directory)
+            if state != .fresh {
+                // A returning player has already had the one-time second contacts ask
+                // (docs/02 §2); without this the bare pre-prompt would replace the tabs
+                // on a simulator whose contacts permission is still undetermined.
+                store.save(Timestamp(Date()), key: StoreKey.contactsReasked)
+            }
             return AppModel(
                 auth: FakeAuth(signedIn: state != .fresh),
                 api: FakeKithAPI(state: state),
-                store: FileStore(directory: directory)
+                store: store
             )
         }
         #endif
