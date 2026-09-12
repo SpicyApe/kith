@@ -58,7 +58,8 @@ import XCTest
             // The six-digit field auto-submits on the last digit, so there is no continue
             // button to tap here — the next screen is what we branch on.
             typeInto(textField("onboarding.code.field"), otp,
-                     "Step 1: onboarding.code.field never appeared after sending the code")
+                     "Step 1: onboarding.code.field never appeared after sending the code",
+                     verify: false)
             step("1. code submitted")
 
             // New account → name + contacts pre-prompt. Returning account → straight to

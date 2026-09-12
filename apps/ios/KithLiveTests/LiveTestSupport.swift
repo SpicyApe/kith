@@ -186,22 +186,21 @@ import XCTest
     func typeInto(_ field: XCUIElement,
                   _ text: String,
                   _ message: String,
+                  verify: Bool = true,
                   file: StaticString = #filePath,
                   line: UInt = #line) {
         awaitAndTap(field, message, file: file, line: line)
         field.typeText(text)
-        // Verify the text landed (a tap that arrives mid-transition can leave the field
-        // unfocused); retry once before giving up.
-        // Fields that auto-submit (the OTP code) may already be gone by now; only verify
-        // while the field is still on screen.
-        guard field.exists else { return }
-        let landed = { (String(describing: field.value ?? "")).contains(text) }
-        if !landed(), field.exists {
+        // Fields that auto-submit (the OTP code) vanish the moment the last character lands,
+        // and reading any attribute of a vanished element is a fatal XCUITest failure, so
+        // callers pass verify: false for those. Everything else is checked once and retried once.
+        guard verify else { return }
+        let value = String(describing: field.value ?? "")
+        if !value.contains(text) {
             field.tap()
             field.typeText(text)
-        }
-        if field.exists {
-            XCTAssertTrue(landed(), message + " (typed text did not land)", file: file, line: line)
+            let again = String(describing: field.value ?? "")
+            XCTAssertTrue(again.contains(text), message + " (typed text did not land)", file: file, line: line)
         }
     }
 
