@@ -381,13 +381,19 @@ await db.exec(`reset role`);
 const win = await db.query(`
   select ((now() - interval '14 hours') at time zone 'UTC')::date::text as lo,
          ((now() + interval '14 hours') at time zone 'UTC')::date::text as hi`);
-const usedDates = new Set([twoAgo, yest, today]);
-const pendingDate = [win.rows[0].lo, win.rows[0].hi].find((d) => !usedDates.has(d));
-if (!pendingDate) throw new Error("could not find a free in-window date for the pending-puzzle test");
-await db.exec(`
-  insert into public.puzzles (date, number, list_id, item_ids, correct_order, status, difficulty) values
-    ('${pendingDate}', 999, 1, '{1,2,3,4,5}', '{1,2,3,4,5}', 'pending', 'easy');
-`);
+// Deterministic regardless of the time of day: take the upper in-window date and,
+// if the seed already has a puzzle there, flip it to pending for the duration of
+// the check; otherwise insert a pending one. Restore afterwards.
+const pendingDate = win.rows[0].hi;
+const pendingExisting = await db.query(`select status from public.puzzles where date = '${pendingDate}'`);
+if (pendingExisting.rows.length > 0) {
+  await db.exec(`update public.puzzles set status = 'pending' where date = '${pendingDate}'`);
+} else {
+  await db.exec(`
+    insert into public.puzzles (date, number, list_id, item_ids, correct_order, status, difficulty) values
+      ('${pendingDate}', 999, 1, '{1,2,3,4,5}', '{1,2,3,4,5}', 'pending', 'easy');
+  `);
+}
 await db.exec(`set role app; set app.uid = '${B}';`);
 let pendingThrew = false;
 try {
@@ -398,6 +404,11 @@ try {
 }
 if (!pendingThrew) throw new Error("start_puzzle: expected a throw for a pending (not yet approved) puzzle");
 await db.exec(`reset role`);
+if (pendingExisting.rows.length > 0) {
+  await db.exec(`update public.puzzles set status = '${pendingExisting.rows[0].status}' where date = '${pendingDate}'`);
+} else {
+  await db.exec(`delete from public.puzzles where date = '${pendingDate}'`);
+}
 
 // The anon role has no EXECUTE grant on start_puzzle at all.
 await db.exec(`reset role`);
@@ -711,15 +722,15 @@ await db.exec(`
     ('${admin30}', 200, 2, '{6,7,8,9,10}', '{6,7,8,9,10}', 'pending', 'easy');
 `);
 
+// Compare against the superuser's view so the count does not depend on the time of day.
+const allPuzzles = (await db.query(`select count(*)::int as n from public.puzzles`)).rows[0].n;
 await db.exec(`set role app; set app.uid = '${B}';`);
 const isAdminAfter = await db.query(`select public.is_admin() as v`);
 if (isAdminAfter.rows[0].v !== true) throw new Error("is_admin: B should be admin after being added to admins");
 
-// 3 from the original seed + the pending in-window one from the start_puzzle
-// tests above + the new out-of-window one just inserted = 5 total rows.
 const adminCount = await db.query(`select count(*)::int as n from public.puzzles`);
-if (adminCount.rows[0].n !== 5) throw new Error(`is_admin policies: admin B expected to see all 5 puzzles, got ${adminCount.rows[0].n}`);
-console.log("is_admin: B (admin) sees all 5 puzzles, including the out-of-window pending one - OK");
+if (adminCount.rows[0].n !== allPuzzles) throw new Error(`is_admin policies: admin B expected to see all ${allPuzzles} puzzles, got ${adminCount.rows[0].n}`);
+console.log(`is_admin: B (admin) sees all ${allPuzzles} puzzles, including the out-of-window pending one - OK`);
 
 const approveResult = await db.query(`update public.puzzles set status = 'approved' where date = '${admin30}'`);
 const approveCount = approveResult.affectedRows ?? approveResult.rows.length;
