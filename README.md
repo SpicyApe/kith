@@ -27,7 +27,7 @@ A daily puzzle app where the leaderboard is made of the contacts in your phone w
 Every layer exists and everything that can be tested on a Windows machine is tested. What has **not** happened yet, in order of importance:
 
 1. Nothing is deployed. No Supabase project, no Cloudflare Pages site, no GitHub remote. `docs/06-deployment-runbook.md` is the checklist.
-2. The SwiftUI target has never been compiled. The first CI run on macOS will find whatever the review missed; `apps/ios/Kith/README.md` lists the likeliest spots.
+2. The SwiftUI target compiles and passes its unit and simulator UI tests on CI (macOS runner), but has not yet been run against a live backend or on a physical device by a person.
 3. Seed content values have not been human-verified; lists ship `enabled = false` until checked in the admin page.
 4. The edge functions have not been exercised against a live Supabase project (they are tested against in-memory stores and the schema against pglite). Build order is in the architecture doc, section 7.
 

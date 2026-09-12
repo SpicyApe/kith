@@ -75,7 +75,21 @@ If Apple's toolchain rejects something in the SwiftUI target, the fix loop is: r
 CI log, edit under `apps/ios/Kith/`, push. `apps/ios/Kith/README.md` lists the spots
 the author was least sure of.
 
-## 5. Local verification (what runs on this Windows machine)
+## 5. Automated testing
+
+Every suite runs on GitHub Actions on each push to `main` and on pull requests. Nothing needs a Mac or a Supabase project.
+
+| Workflow / job | Runner | What runs |
+|---|---|---|
+| Backend → Edge functions | ubuntu | `deno check` of every entrypoint, `deno test` (256 tests) |
+| Backend → Schema + RLS + seed | ubuntu | pglite applies the migration, exercises policies and RPCs as real roles, loads the seed twice |
+| iOS → Swift packages | macOS | `swift test` for LineupEngine (81) and KithCore (107) |
+| iOS → App unit + UI tests | macOS simulator | `KithTests` (14 in-process tests over an in-memory fake backend) and `KithUITests` (7 XCUITests through onboarding, play, board, circles, profile). Flaky-test retry is one extra iteration; a deterministic failure still fails. On failure the `.xcresult` is uploaded and the failure summary is printed. |
+| iOS → Unsigned IPA | macOS | Only after both iOS jobs pass |
+
+The app-side test seam (`-uiTesting` launch argument, fake API states, accessibility identifiers) is specified in `apps/ios/TESTING.md`.
+
+Locally on a Windows or Linux machine you can still run everything except the two simulator bundles:
 
 | Suite | Command |
 |---|---|
