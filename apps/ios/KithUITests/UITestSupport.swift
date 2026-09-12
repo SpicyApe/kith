@@ -5,7 +5,7 @@ import XCTest
 /// See `apps/ios/TESTING.md` §1 (launch arguments), §3 (accessibility identifiers)
 /// and §5 (the test list). Nothing here reaches into the app target: UI tests run
 /// out of process, so this file deliberately imports `XCTest` only.
-class KithUITestCase: XCTestCase {
+@MainActor class KithUITestCase: XCTestCase {
 
     /// Every existence wait in the suite uses this. Simulator cold starts on CI are
     /// slower than a developer Mac, so it is deliberately generous. We never sleep.

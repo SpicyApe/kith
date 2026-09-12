@@ -59,6 +59,12 @@ jobs:
             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -quiet
+      - name: Test failure details
+        if: failure()
+        working-directory: apps/ios
+        run: |
+          xcrun xcresulttool get test-results summary --path TestResults.xcresult > summary.json || true
+          jq -r '.testFailures[]? | "\(.testName): \(.failureText)"' summary.json || cat summary.json | head -100
       - name: Upload test results
         if: failure()
         uses: actions/upload-artifact@v4

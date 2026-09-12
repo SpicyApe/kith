@@ -6,7 +6,7 @@ import XCTest
 /// fake backend (TESTING.md §2) and its temporary `FileStore` start clean; the tests are
 /// therefore independent and order-insensitive. Identifiers come from TESTING.md §3 and
 /// copy from `docs/03-wireframes.md`.
-final class KithUITests: KithUITestCase {
+@MainActor final class KithUITests: KithUITestCase {
 
     // MARK: - 1. Onboarding through to the first puzzle
 
