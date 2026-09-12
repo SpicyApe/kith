@@ -67,6 +67,47 @@ reflects sign-in state.
 | Profile | `profile.streak`, `profile.heatmap`, `profile.inviteCode`, `profile.discoverable`, `profile.deleteAccount`, `profile.deleteConfirm` |
 | Global | `banner.configMissing`, `toast` |
 
+Games hub (`apps/ios/PLAN-games.md`, docs/07). The Today tab is `HubView`; the Lineup
+identifiers above now live on the screen it pushes.
+
+| Screen | Identifiers |
+|---|---|
+| Hub | `hub.row.lineup`, `hub.row.stars`, `hub.row.duo`, `hub.row.trail`, `hub.streak`, `hub.countdown` |
+| Game host | `game.timer`, `game.giveUp`, `game.giveUp.confirm`, `game.reset`, `game.done`, `game.retry` (a failed `startGame`'s "Try again"), `game.showResult` (on an already-played game's card, reopens `GameResultsView`) |
+| Grids | `stars.cell.<r>.<c>`, `duo.cell.<r>.<c>`, `trail.cell.<r>.<c>` (accessibility label "row r column c, <state>") |
+| Game results | `gameResults.headline`, `gameResults.time`, `gameResults.score`, `gameResults.share` |
+| Board | `board.game` (Picker or, below the width the five-segment control fits, a `Menu` — same identifier either way) |
+
+`<r>` and `<c>` in the grid identifiers are the engine's **0-based** coordinates, matching
+`today.tile.<i>`; the spoken label numbers them from 1 ("row 1 column 2, empty"), which is
+what VoiceOver users expect.
+
+Under `-uiTesting` the fake puzzles are tiny so UI tests can solve them by tapping cells in
+a known order:
+
+- **Stars** 5×5, regions = the five rows, solution columns `[1, 3, 0, 2, 4]`. Tap each of
+  `stars.cell.0.1`, `stars.cell.1.3`, `stars.cell.2.0`, `stars.cell.3.2`, `stars.cell.4.4`
+  **twice** (empty → ✕ → ★).
+- **Duo** 6×6, a real Tango solution with all 30 off-diagonal cells given; the six blanks
+  are the leading diagonal `duo.cell.<i>.<i>`. One `=` badge on (0,0)–(0,1) and one `×`
+  badge on (1,0)–(1,1).
+- **Trail** 3×3, waypoints `[[0,0],[1,1],[2,2]]`, solved by the snake
+  (0,0) (0,1) (0,2) (1,2) (1,1) (1,0) (2,0) (2,1) (2,2). The path always starts at
+  waypoint 1, `(0,0)`, so a test only taps the remaining eight cells in that order.
+
+`dailyGames` returns all three every day; `submitGame` records the call (`gameSubmissions`)
+and scores with `GameScoring.score`; `failNextGameSubmit` is the grid-game twin of
+`failNextSubmit`. `failNextGameSubmitWithNoStart` makes the next `submitGame` throw
+`KithError.api(status: 409, code: "no_start", message:)` once — the backend's answer when
+`start_game` was never called for that date/game; `AppModel`'s submit path replays
+`start_game` and retries the submit exactly once before falling back to the offline queue.
+
+`AppModel.activeGames: [GameKind: ActiveGame]` holds every grid game's session, not just
+one: opening Duo while Stars is unfinished keeps the Stars session in the dictionary rather
+than discarding it. `activeGame` (singular) is a computed convenience that follows whichever
+kind `startGame` opened most recently; `GameHostView` and `GameResultsView` read
+`activeGames[kind]` directly instead, so a screen always shows its own kind's session.
+
 ## 4. `KithTests` (unit, in-process, `@MainActor`, XCTest, host app Kith)
 
 Use `AppModel(auth: FakeAuth(), api: FakeKithAPI(state:), store: FileStore(directory: temp))`.

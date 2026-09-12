@@ -17,6 +17,8 @@ import type {
   ListRow,
   Usage,
 } from "../generate-puzzles/handler.ts";
+import type { GameKind, GeneratedGame } from "./games/common.ts";
+import { SubmitGameStoreError, type StoredGameResult, type SubmitGameStore } from "../submit-game/handler.ts";
 
 // ---------------------------------------------------------------------------
 // register
@@ -390,5 +392,157 @@ export class FakeGenerateStore implements GenerateStore {
 
   seedOf(date: string): Promise<number | null> {
     return Promise.resolve(this.seeds.has(date) ? this.seeds.get(date)! : null);
+  }
+
+  // --- grid games (daily_games; docs/07-games-hub.md) ---
+
+  gamesData = new Map<string, { g: GeneratedGame; number: number }>(); // key `${date}#${game}`
+  nextGameNumberValues = new Map<GameKind, number>();
+  gameSeeds = new Map<string, number>(); // key `${date}#${game}`
+
+  insertedGames: Array<{ date: string; g: GeneratedGame; number: number }> = [];
+  replacedGames: Array<{ date: string; g: GeneratedGame }> = [];
+  /** When set, the NEXT replaceGame() call rejects with this error. */
+  replaceGameError: Error | null = null;
+  /** `${date}#${game}` keys with an (simulated) existing `game_results` row: replaceGame throws `has_results`. */
+  gameResultsExist = new Set<string>();
+
+  private gameKey(date: string, game: GameKind): string {
+    return `${date}#${game}`;
+  }
+
+  /** Mark a (date, game) as already played, so replaceGame throws `code: "has_results"`. */
+  seedGameResult(date: string, game: GameKind): void {
+    this.gameResultsExist.add(this.gameKey(date, game));
+  }
+
+  existingGames(from: string, to: string): Promise<string[]> {
+    return Promise.resolve([...this.gamesData.keys()].filter((k) => {
+      const date = k.split("#")[0];
+      return date >= from && date <= to;
+    }));
+  }
+
+  nextGameNumber(game: GameKind): Promise<number> {
+    return Promise.resolve(this.nextGameNumberValues.get(game) ?? 1);
+  }
+
+  insertGame(date: string, g: GeneratedGame, number: number): Promise<void> {
+    this.insertedGames.push({ date, g, number });
+    this.gamesData.set(this.gameKey(date, g.game), { g, number });
+    this.gameSeeds.set(this.gameKey(date, g.game), g.seed);
+    this.nextGameNumberValues.set(g.game, number + 1);
+    return Promise.resolve();
+  }
+
+  replaceGame(date: string, g: GeneratedGame): Promise<void> {
+    if (this.replaceGameError) {
+      const err = this.replaceGameError;
+      this.replaceGameError = null;
+      return Promise.reject(err);
+    }
+    const key = this.gameKey(date, g.game);
+    if (this.gameResultsExist.has(key)) {
+      return Promise.reject(Object.assign(new Error("has results"), { code: "has_results" }));
+    }
+    const existing = this.gamesData.get(key);
+    this.gamesData.set(key, { g, number: existing?.number ?? 1 });
+    this.gameSeeds.set(key, g.seed);
+    this.replacedGames.push({ date, g });
+    return Promise.resolve();
+  }
+
+  gameSeedOf(date: string, game: GameKind): Promise<number | null> {
+    const key = this.gameKey(date, game);
+    return Promise.resolve(this.gameSeeds.has(key) ? this.gameSeeds.get(key)! : null);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// submit-game
+// ---------------------------------------------------------------------------
+
+export type InsertGameResultRow = Omit<StoredGameResult, "submittedAt"> & { tz: string; submittedAt: Date };
+
+export class FakeSubmitGameStore implements SubmitGameStore {
+  games = new Map<string, { spec: unknown; solution: unknown; number: number }>(); // key `${date}#${game}`
+  starts = new Map<string, Date>(); // key `${userId}|${date}|${game}`
+  results = new Map<string, StoredGameResult>(); // key `${userId}|${date}|${game}`
+  streaks = new Map<string, number>();
+  insertResultCalls: Array<{ userId: string; row: InsertGameResultRow }> = [];
+  touchUserCalls: Array<{ userId: string; tz: string; now: Date }> = [];
+  /**
+   * When true, the NEXT insertResult call throws `duplicate` (simulating a
+   * concurrent writer) and, if `raceResult` is set, plants it under the same
+   * key first so a subsequent getResult "re-read" sees the row the other
+   * request supposedly inserted.
+   */
+  forceDuplicateOnce = false;
+  raceResult: StoredGameResult | null = null;
+  /** When set, the NEXT touchUser/streak call rejects with this error instead of succeeding. */
+  touchUserError: Error | null = null;
+  streakError: Error | null = null;
+
+  private gameKey(date: string, game: GameKind): string {
+    return `${date}#${game}`;
+  }
+
+  private key(userId: string, date: string, game: GameKind): string {
+    return `${userId}|${date}|${game}`;
+  }
+
+  seedGame(date: string, game: GameKind, spec: unknown, solution: unknown, number: number): void {
+    this.games.set(this.gameKey(date, game), { spec, solution, number });
+  }
+
+  seedStart(userId: string, date: string, game: GameKind, startedAt: Date): void {
+    this.starts.set(this.key(userId, date, game), startedAt);
+  }
+
+  seedResult(userId: string, result: StoredGameResult): void {
+    this.results.set(this.key(userId, result.date, result.game), result);
+  }
+
+  setStreak(userId: string, n: number): void {
+    this.streaks.set(userId, n);
+  }
+
+  getGame(date: string, game: GameKind): Promise<{ spec: unknown; solution: unknown } | null> {
+    return Promise.resolve(this.games.get(this.gameKey(date, game)) ?? null);
+  }
+
+  getStart(userId: string, date: string, game: GameKind): Promise<Date | null> {
+    return Promise.resolve(this.starts.get(this.key(userId, date, game)) ?? null);
+  }
+
+  getResult(userId: string, date: string, game: GameKind): Promise<StoredGameResult | null> {
+    return Promise.resolve(this.results.get(this.key(userId, date, game)) ?? null);
+  }
+
+  insertResult(userId: string, row: InsertGameResultRow): Promise<void> {
+    this.insertResultCalls.push({ userId, row });
+    const key = this.key(userId, row.date, row.game);
+    if (this.forceDuplicateOnce) {
+      this.forceDuplicateOnce = false;
+      if (this.raceResult) this.results.set(key, this.raceResult);
+      throw new SubmitGameStoreError("duplicate");
+    }
+    if (this.results.has(key)) {
+      throw new SubmitGameStoreError("duplicate");
+    }
+    const { tz: _tz, submittedAt, ...rest } = row;
+    this.results.set(key, { ...rest, submittedAt: submittedAt.toISOString() });
+    return Promise.resolve();
+  }
+
+  streak(userId: string): Promise<number> {
+    if (this.streakError) return Promise.reject(this.streakError);
+    return Promise.resolve(this.streaks.get(userId) ?? 0);
+  }
+
+  touchUser(userId: string, tz: string, now: Date): Promise<void> {
+    this.touchUserCalls.push({ userId, tz, now });
+    if (this.touchUserError) return Promise.reject(this.touchUserError);
+    return Promise.resolve();
   }
 }

@@ -114,6 +114,47 @@ import XCTest
         return app.buttons[identifier]
     }
 
+    /// The Today tab is the games hub (docs/07); Lineup and the three grid games are screens
+    /// it pushes. Taps one of its rows.
+    func openHubRow(_ slug: String,
+                    _ message: String,
+                    file: StaticString = #filePath,
+                    line: UInt = #line) {
+        awaitAndTap(element("hub.row.\(slug)"), message,
+                    timeout: Self.launchTimeout, file: file, line: line)
+    }
+
+    /// Pops the pushed game screen back to the hub. The back button carries the previous
+    /// title ("Today"); if that spelling is not what the navigation bar exposes, fall back
+    /// to the bar's first button, and then to re-tapping the already-selected tab.
+    func popToHub() {
+        let hubRow = element("hub.row.lineup")
+        if hubRow.exists { return }
+        // A results cover left presented (a game finished but its "Done" was never
+        // reached) blocks the back-button path entirely; clear it before trying the
+        // back button at all (finding B4).
+        _ = tapIfPresent(app.buttons["Close results"])
+        _ = tapIfPresent(app.buttons["Done"])
+        let back = app.navigationBars.buttons["Today"]
+        if back.waitForExistence(timeout: Self.optionalTimeout), back.isHittable {
+            back.tap()
+        } else {
+            let first = app.navigationBars.buttons.element(boundBy: 0)
+            if first.exists, first.isHittable { first.tap() }
+        }
+        if !hubRow.waitForExistence(timeout: Self.optionalTimeout) {
+            tab("tab.today").tap()
+        }
+        // A hittable back button can still be a no-op if a modal ate the tap; fail with a
+        // clear reason here rather than letting the next step's assertion be the one that
+        // reports it, several steps and screenshots away from the real cause.
+        let todayTab = tab("tab.today")
+        guard todayTab.exists else {
+            XCTFail("popToHub: could not reach the hub; a modal is still presented")
+            return
+        }
+    }
+
     /// A text field by identifier. A six-box OTP field or a `SecureField` does not land in
     /// the plain `textFields` query, so fall back the same way `tab(_:)` does.
     func textField(_ identifier: String) -> XCUIElement {

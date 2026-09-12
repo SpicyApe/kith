@@ -8,11 +8,14 @@ the macOS steps run on GitHub Actions.
 
 **Current project (created 2026-09-12):** ref `guesfztufvxeqylyjvyi`, region us-east-1,
 URL `https://guesfztufvxeqylyjvyi.supabase.co`, dashboard
-https://supabase.com/dashboard/project/guesfztufvxeqylyjvyi. Migrations 0001–0003 are
-applied, `CONTACT_PEPPER` is set, all six functions are deployed, and the GitHub secrets
-`SUPABASE_URL` / `SUPABASE_ANON_KEY` are set. The database password and pepper are in
-`~/.kith/` on the machine that created the project. Still to do in the dashboard: steps
-2 (phone provider or test OTP) and 8 (Vault secrets, then `select public.schedule_background_jobs();`).
+https://supabase.com/dashboard/project/guesfztufvxeqylyjvyi. All migrations are applied,
+`CONTACT_PEPPER`, `KITH_SERVICE_ROLE_KEY` and `KITH_CRON_SECRET` are set, every function is
+deployed, the Vault secrets exist and both cron jobs are scheduled, phone auth is enabled
+with two test numbers (the owner's and `+1 500 555 0006` for CI, code `123456`, valid until
+2027-01-01), and the GitHub secrets `SUPABASE_URL` / `SUPABASE_ANON_KEY` / `KITH_TEST_PHONE` /
+`KITH_TEST_OTP` are set. The database password, pepper and cron secret are in `~/.kith/` on
+the machine that created the project. Still to do: real Twilio credentials before public
+users, APNs secrets for pushes, and the owner's `admins` row after their first sign-in.
 
 1. Create a project at supabase.com. Note the project URL, anon key, and service-role key.
 2. Enable phone auth: Authentication → Providers → Phone, with Twilio Verify credentials.
@@ -100,7 +103,7 @@ Every suite runs on GitHub Actions on each push to `main` and on pull requests. 
 |---|---|---|
 | Backend → Edge functions | ubuntu | `deno check` of every entrypoint, `deno test` (256 tests) |
 | Backend → Schema + RLS + seed | ubuntu | pglite applies the migration, exercises policies and RPCs as real roles, loads the seed twice |
-| iOS → Swift packages | macOS | `swift test` for LineupEngine (81) and KithCore (107) |
+| iOS → Swift packages | macOS | `swift test` for LineupEngine, GridGames and KithCore |
 | iOS → App unit + UI tests | macOS simulator | `KithTests` (14 in-process tests over an in-memory fake backend) and `KithUITests` (7 XCUITests through onboarding, play, board, circles, profile). Flaky-test retry is one extra iteration; a deterministic failure still fails. On failure the `.xcresult` is uploaded and the failure summary is printed. |
 | iOS → Live end-to-end (real backend) | macOS simulator | `KithLiveTests`: launches the real app against the live Supabase project, signs in with the Supabase test number (secrets `KITH_TEST_PHONE` / `KITH_TEST_OTP`), registers, plays today's puzzle to a result, checks the board and profile, and deletes the account. Gated by the repository variable `KITH_LIVE_E2E` (currently `true`) or manual dispatch with `live=true`; serialized by a concurrency group. Failures print the app's status line (stage, step, last error) and the screen tree. |
 | iOS → Unsigned IPA | macOS | Only after both iOS jobs pass |

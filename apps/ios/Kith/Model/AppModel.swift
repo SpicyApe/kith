@@ -5,6 +5,7 @@
 // SwiftUI sees the change.
 
 import Foundation
+import GridGames
 import KithCore
 import LineupEngine
 import Observation
@@ -45,6 +46,58 @@ struct BoardCacheKey: Hashable, Sendable {
     let scopeId: String?
     let period: BoardPeriod
     let date: String
+    /// Which column the board was asked for (docs/07). Defaults to Lineup so every call
+    /// site written before the games hub still compiles and still means the same thing.
+    let game: BoardGame
+
+    init(kind: BoardKind, scopeId: String?, period: BoardPeriod, date: String,
+         game: BoardGame = .lineup) {
+        self.kind = kind
+        self.scopeId = scopeId
+        self.period = period
+        self.date = date
+        self.game = game
+    }
+}
+
+/// One row of the games hub (PLAN-games.md "Screens"). `Lineup` is not a `GameKind`,
+/// so the hub's four rows are modelled here rather than in `GridGames`.
+enum HubGame: Hashable, Sendable, CaseIterable {
+    case lineup
+    case grid(GameKind)
+
+    static var allCases: [HubGame] { [.lineup] + GameKind.allCases.map(HubGame.grid) }
+
+    var title: String {
+        switch self {
+        case .lineup: return "Lineup"
+        case .grid(let kind): return kind.title
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .lineup: return "square.stack.3d.up"
+        case .grid(let kind): return kind.symbolName
+        }
+    }
+
+    /// The `hub.row.<name>` identifier suffix and the analytics name.
+    var slug: String {
+        switch self {
+        case .lineup: return "lineup"
+        case .grid(let kind): return kind.rawValue
+        }
+    }
+
+    var boardGame: BoardGame {
+        switch self {
+        case .lineup: return .lineup
+        case .grid(.stars): return .stars
+        case .grid(.duo): return .duo
+        case .grid(.trail): return .trail
+        }
+    }
 }
 
 // MARK: - The model
@@ -89,6 +142,42 @@ final class AppModel {
     var resultPendingSync = false
     /// Values and facts for today's five items, in correct order. Empty until played.
     var reveal: [RevealItem] = []
+
+    // Games hub (docs/07, PLAN-games.md)
+    /// Today's `daily_games` rows. A game with no row here is not available today.
+    var dailyGames: [DailyGameRow] = []
+    /// Every grid-game result the hub and profile know about, keyed `"<date>#<game>"`.
+    var gameResults: [String: StoredGameResult] = [:]
+    /// The raw history behind the profile's per-game breakdown and the heatmap merge.
+    var myGameResults: [GameResultSummary] = []
+    /// Every grid game with an in-progress (or just-finished, not yet cleared) session,
+    /// keyed by kind. A dictionary rather than a single slot so opening Duo does not
+    /// silently discard an unfinished Stars round (reviewer finding A1).
+    var activeGames: [GameKind: ActiveGame] = [:]
+    /// Which kind `startGame` most recently opened. Backs the `activeGame` convenience
+    /// accessor below for call sites (the three grid views, the results screen) that
+    /// only ever care about "whichever game is currently on screen".
+    var openGameKind: GameKind?
+    /// The message from the most recent failed `startGame`, per kind, so `GameHostView`
+    /// can show a "Try again" state instead of spinning forever (finding B1).
+    var activeGameErrors: [GameKind: String] = [:]
+    /// Drives `GameResultsView` as a cover over `GameHostView`.
+    var showGameResults = false
+    /// True while at least one grid-game submission is sitting in the offline queue.
+    var gamePendingSync = false
+
+    /// The game `openGameKind` points at, if any. Every internal mutator (`resetGame`,
+    /// `applyMove`, `finishGame`, `giveUpGame`, `submit`) reads and writes through this
+    /// rather than taking a `kind` parameter, since only one grid game is ever being
+    /// interacted with at a time; `GameHostView` and its children read `activeGames[kind]`
+    /// directly instead, so a screen never appears to show a different kind's session.
+    var activeGame: ActiveGame? {
+        get { openGameKind.flatMap { activeGames[$0] } }
+        set {
+            guard let kind = openGameKind else { return }
+            activeGames[kind] = newValue
+        }
+    }
 
     // Social
     var boards: [BoardCacheKey: [BoardRow]] = [:]
@@ -188,6 +277,7 @@ final class AppModel {
         await loadToday()
         await refreshBoard(kind: .friends, scopeId: nil, period: .today)
         await retryQueuedResult()
+        await retryQueuedGames()
     }
 
     private func loadCaches() {
@@ -273,7 +363,32 @@ final class AppModel {
         if playedToday {
             await loadReveal()
         }
+
+        // Best effort: the hub still renders its Lineup row when either of these fails.
+        await loadGames()
+
         maybeReaskForContacts()
+    }
+
+    /// Today's `daily_games` rows plus the caller's grid-game history. Never throws: the
+    /// hub degrades to "Not available today" rows rather than an error screen (PLAN-games.md).
+    func loadGames() async {
+        if let rows = try? await api.dailyGames(date: today) {
+            dailyGames = rows
+        }
+        await refreshGameResults()
+    }
+
+    func refreshGameResults() async {
+        guard let results = try? await api.myGameResults(sinceDate: LocalDay.shift(today, by: -63))
+        else { return }
+        myGameResults = results
+        var map = gameResults
+        for summary in results {
+            guard let stored = Self.stored(from: summary) else { continue }
+            map[Self.gameKey(date: summary.date, game: summary.game)] = stored
+        }
+        gameResults = map
     }
 
     /// Values and one-line facts for today's five items. RLS only lets this through once
@@ -303,6 +418,7 @@ final class AppModel {
         }
         midnight.reschedule(tz: tz)
         await retryQueuedResult()
+        await retryQueuedGames()
         contactsState = ContactsService.authorizationState()
         if shouldAutoSyncContacts {
             await syncContacts(userInitiated: false)
@@ -338,6 +454,11 @@ final class AppModel {
         reactions = []
         boards = [:]
         failedBoards = []
+        dailyGames = []
+        activeGames = [:]
+        openGameKind = nil
+        activeGameErrors = [:]
+        showGameResults = false
         store.remove(key: StoreKey.cachedPuzzle)
         store.remove(key: StoreKey.localResult)
         await loadToday()
@@ -498,6 +619,413 @@ final class AppModel {
         if let streakValue = try? await api.myStreak() { streak = streakValue }
     }
 
+    // MARK: - Games hub (docs/07, PLAN-games.md)
+
+    /// `"<date>#<game>"`, the key `gameResults` is stored under.
+    static func gameKey(date: String, game: GameKind) -> String {
+        "\(date)#\(game.rawValue)"
+    }
+
+    /// `game_results` rows arrive as `GameResultSummary` (six columns) but the hub and the
+    /// results screen both read `StoredGameResult`. KithCore's wire structs have no public
+    /// memberwise init, so the two are bridged the same way `FakeKithAPI` bridges its seeds:
+    /// encode a local struct with identical field names and decode the real type.
+    static func stored(from summary: GameResultSummary) -> StoredGameResult? {
+        struct Seed: Encodable {
+            let date: String
+            let game: GameKind
+            let elapsedMs: Int
+            let elapsedSource: String
+            let mistakes: Int
+            let solved: Bool
+            let gaveUp: Bool
+            let score: Int
+            let submittedAt: String
+        }
+        return decode(
+            Seed(date: summary.date, game: summary.game, elapsedMs: summary.elapsed_ms,
+                 elapsedSource: "server", mistakes: 0, solved: summary.solved,
+                 gaveUp: summary.gave_up, score: summary.score, submittedAt: ""),
+            as: StoredGameResult.self
+        )
+    }
+
+    /// Encode-then-decode bridge for KithCore's initializer-less wire types.
+    static func decode<Seed: Encodable, Wire: Decodable>(_ seed: Seed, as: Wire.Type) -> Wire? {
+        guard let data = try? JSONEncoder().encode(seed) else { return nil }
+        return try? JSONDecoder().decode(Wire.self, from: data)
+    }
+
+    /// Today's stored result for a grid game, if it has been played.
+    func result(for kind: GameKind) -> StoredGameResult? {
+        gameResults[Self.gameKey(date: today, game: kind)]
+    }
+
+    /// A grid game is playable only when the server published a row for it today.
+    func isAvailable(_ kind: GameKind) -> Bool {
+        dailyGames.contains { $0.game == kind && $0.date == today }
+    }
+
+    func dailyRow(for kind: GameKind) -> DailyGameRow? {
+        dailyGames.first { $0.game == kind && $0.date == today }
+    }
+
+    /// The hub row's subtitle (PLAN-games.md "Screens").
+    func hubStatus(for game: HubGame) -> String {
+        switch game {
+        case .lineup:
+            guard let row = myResults.first(where: { $0.puzzle_date == today }) else {
+                return "Not played"
+            }
+            let tries = row.tries == 1 ? "1 try" : "\(row.tries) tries"
+            return row.solved ? "Solved in \(tries) · \(row.score)" : "Out of tries · \(row.score)"
+        case .grid(let kind):
+            if let stored = result(for: kind) {
+                if stored.gaveUp { return "Gave up" }
+                if stored.solved { return "Solved · \(Self.clock(stored.elapsedMs))" }
+                return "Not solved"
+            }
+            return isAvailable(kind) ? "Not played" : "Not available today"
+        }
+    }
+
+    func isHubRowEnabled(_ game: HubGame) -> Bool {
+        switch game {
+        case .lineup: return true
+        case .grid(let kind): return isAvailable(kind) || result(for: kind) != nil
+        }
+    }
+
+    // MARK: Starting and playing
+
+    /// Fetches the spec and builds the engine for `kind`, keyed into `activeGames` rather
+    /// than overwriting a single slot.
+    func startGame(_ kind: GameKind) async {
+        openGameKind = kind
+        // A no-op when that kind is already open and unfinished, so re-entering the
+        // screen (or a `.task` firing twice) does not restart the timer. Unlike before,
+        // this never clears `activeGames[otherKind]`: opening a different grid game must
+        // not destroy another one still in progress (finding A1).
+        if let active = activeGames[kind], active.finished == nil { return }
+        if result(for: kind) != nil { return }
+        activeGameErrors[kind] = nil
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let started = try await api.startGame(date: today, game: kind)
+            let engine = try GameEngine(spec: started.spec)
+            activeGames[kind] = ActiveGame(started: started, engine: engine, revealedAt: Date())
+        } catch {
+            activeGameErrors[kind] = message(for: error)
+            show(toast: message(for: error), isError: true)
+        }
+    }
+
+    /// Clears the grid and starts the player over. The clock deliberately keeps running:
+    /// the server clamps elapsed against `game_starts` anyway (docs/07).
+    func resetGame() {
+        guard var active = activeGame, active.finished == nil else { return }
+        active.engine.reset()
+        active.moves += 1
+        activeGame = active
+    }
+
+    /// Applies a move and books a mistake when it puts a cell into conflict that was not in
+    /// conflict before. `body` returns false when the engine refused the move. `countsMistakes`
+    /// lets a caller suppress the count for a move that cannot fairly be judged a mistake yet
+    /// (Duo's first tap of a cycle — see `duoCycle`).
+    private func applyMove(countsMistakes: Bool = true, _ body: (inout GameEngine) -> Bool) {
+        guard var active = activeGame, !active.isFinishing, active.finished == nil else { return }
+        let before = active.engine.conflicts
+        guard body(&active.engine) else { return }
+        let after = active.engine.conflicts
+        if countsMistakes, !after.subtracting(before).isEmpty { active.mistakes += 1 }
+        active.moves += 1
+        activeGame = active
+    }
+
+    // The five mutators below all bind the engine with `case let` and mutate a local copy,
+    // rather than a `case var` pattern: value semantics either way, and no reliance on a
+    // pattern form the compiler has opinions about.
+
+    func starsCycle(at point: GridPoint) {
+        applyMove { engine in
+            guard case .stars(let current) = engine else { return false }
+            var stars = current
+            do { try stars.cycle(at: point) } catch { return false }
+            engine = .stars(stars)
+            return true
+        }
+    }
+
+    /// Drag-painting: only ever turns an empty cell into a ✕, never disturbs a star.
+    func starsPaintCross(at point: GridPoint) {
+        applyMove { engine in
+            guard case .stars(let current) = engine else { return false }
+            guard point.row >= 0, point.row < current.spec.n,
+                  point.col >= 0, point.col < current.spec.n,
+                  current.marks[point.row][point.col] == .empty else { return false }
+            var stars = current
+            do { try stars.set(.cross, at: point) } catch { return false }
+            engine = .stars(stars)
+            return true
+        }
+    }
+
+    /// The cycle is empty → ● → ○ → empty. The first tap of any cell always lands on ●,
+    /// which can transiently be a conflict (a row already at its limit of ●) purely because
+    /// the player has not reached the symbol they meant to leave there yet — that is not a
+    /// mistake, so only the second and third taps of a cycle (● → ○, ○ → empty) can book one
+    /// (finding B2).
+    func duoCycle(at point: GridPoint) {
+        guard case .duo(let current)? = activeGame?.engine else { return }
+        let wasEmpty = current.cells[point.row][point.col] == nil
+        applyMove(countsMistakes: !wasEmpty) { engine in
+            guard case .duo(let current) = engine else { return false }
+            guard !current.isGiven(at: point) else { return false }
+            var duo = current
+            do { try duo.cycle(at: point) } catch { return false }
+            engine = .duo(duo)
+            return true
+        }
+    }
+
+    func trailExtend(to point: GridPoint) {
+        applyMove { engine in
+            guard case .trail(let current) = engine else { return false }
+            var trail = current
+            guard trail.extend(to: point) else { return false }
+            engine = .trail(trail)
+            return true
+        }
+    }
+
+    func trailRetract(to point: GridPoint) {
+        applyMove { engine in
+            guard case .trail(let current) = engine else { return false }
+            guard current.path.contains(point), current.path.last != point else { return false }
+            var trail = current
+            trail.retract(to: point)
+            engine = .trail(trail)
+            return true
+        }
+    }
+
+    // MARK: Finishing
+
+    /// Submits the completed grid. Does nothing while the engine says it is not complete.
+    func finishGame() async {
+        guard let active = activeGame, !active.isFinishing, active.finished == nil,
+              let answer = active.engine.answer else { return }
+        await submit(active, gaveUp: false, answer: answer)
+    }
+
+    /// "Give up" reveals the solution server-side and scores 100 (docs/07).
+    func giveUpGame() async {
+        guard let active = activeGame, !active.isFinishing, active.finished == nil else { return }
+        await submit(active, gaveUp: true, answer: nil)
+    }
+
+    private func submit(_ active: ActiveGame, gaveUp: Bool, answer: GameAnswer?) async {
+        var game = active
+        game.isFinishing = true
+        let kind = game.kind
+        activeGames[kind] = game
+
+        let elapsed = game.elapsedMs
+        isBusy = true
+        defer { isBusy = false }
+
+        game.finished = await submitGame(kind: kind, elapsedMs: elapsed, mistakes: game.mistakes,
+                                         gaveUp: gaveUp, answer: answer, retryNoStart: true)
+
+        game.isFinishing = false
+        activeGames[kind] = game
+        showGameResults = true
+
+        await refreshBoard(kind: .friends, scopeId: nil, period: .today,
+                           game: HubGame.grid(kind).boardGame, force: true)
+        _ = try? await api.track("game_submit", props: ["date": today, "game": kind.rawValue])
+    }
+
+    /// Submits one grid game and settles on the `StoredGameResult` the UI shows, whatever
+    /// the server said:
+    /// - success → the server's own result;
+    /// - `already_played` (409) → treated as success, refetched from `game_results`;
+    /// - `no_start` (409, the caller never called `start_game` for this date/game) → replay
+    ///   `start_game` once and retry the submit exactly once more (`retryNoStart` guards
+    ///   against looping if the retry also comes back `no_start`);
+    /// - anything else → queued for `retryQueuedGames`.
+    private func submitGame(kind: GameKind, elapsedMs: Int, mistakes: Int, gaveUp: Bool,
+                            answer: GameAnswer?, retryNoStart: Bool) async -> StoredGameResult? {
+        do {
+            let response = try await api.submitGame(
+                date: today, game: kind, tz: tz, elapsedMs: elapsedMs,
+                mistakes: mistakes, gaveUp: gaveUp, answer: answer
+            )
+            gameResults[Self.gameKey(date: today, game: kind)] = response.result
+            streak = response.streak
+            return response.result
+        } catch let error as KithError {
+            if case .api(_, let code, _) = error, code == "already_played" {
+                await refreshGameResults()
+                return result(for: kind) ?? Self.localGameResult(
+                    date: today, game: kind, elapsedMs: elapsedMs, mistakes: mistakes, gaveUp: gaveUp
+                )
+            }
+            if case .api(_, let code, _) = error, code == "no_start", retryNoStart {
+                _ = try? await api.startGame(date: today, game: kind)
+                return await submitGame(kind: kind, elapsedMs: elapsedMs, mistakes: mistakes,
+                                        gaveUp: gaveUp, answer: answer, retryNoStart: false)
+            }
+            return queueGame(kind: kind, elapsedMs: elapsedMs, mistakes: mistakes,
+                             gaveUp: gaveUp, answer: answer)
+        } catch {
+            return queueGame(kind: kind, elapsedMs: elapsedMs, mistakes: mistakes,
+                             gaveUp: gaveUp, answer: answer)
+        }
+    }
+
+    /// The result the UI shows while a submission is still queued. Score is computed with
+    /// the same rule the server uses (`GameScoring`), so the number does not jump on sync.
+    private static func localGameResult(date: String, game: GameKind, elapsedMs: Int,
+                                        mistakes: Int, gaveUp: Bool) -> StoredGameResult? {
+        struct Seed: Encodable {
+            let date: String
+            let game: GameKind
+            let elapsedMs: Int
+            let elapsedSource: String
+            let mistakes: Int
+            let solved: Bool
+            let gaveUp: Bool
+            let score: Int
+            let submittedAt: String
+        }
+        return decode(
+            Seed(date: date, game: game, elapsedMs: elapsedMs, elapsedSource: "client",
+                 mistakes: mistakes, solved: !gaveUp, gaveUp: gaveUp,
+                 score: GameScoring.score(elapsedMs: elapsedMs, gaveUp: gaveUp),
+                 submittedAt: ""),
+            as: StoredGameResult.self
+        )
+    }
+
+    @discardableResult
+    private func queueGame(kind: GameKind, elapsedMs: Int, mistakes: Int,
+                           gaveUp: Bool, answer: GameAnswer?) -> StoredGameResult? {
+        var queue = store.load([QueuedGameResult].self, key: StoreKey.queuedGameResults) ?? []
+        queue.removeAll { $0.date == today && $0.game == kind }
+        queue.append(QueuedGameResult(date: today, game: kind, tz: tz, elapsedMs: elapsedMs,
+                                      mistakes: mistakes, gaveUp: gaveUp, answer: answer))
+        store.save(queue, key: StoreKey.queuedGameResults)
+        gamePendingSync = true
+        show(toast: "Offline. Your score will sync.", isError: false)
+        let local = Self.localGameResult(date: today, game: kind, elapsedMs: elapsedMs,
+                                         mistakes: mistakes, gaveUp: gaveUp)
+        if let local { gameResults[Self.gameKey(date: today, game: kind)] = local }
+        return local
+    }
+
+    /// Everything still waiting to be replayed. The seam `KithTests` uses instead of
+    /// guessing the file path, exactly like `queuedResult`.
+    var queuedGameResults: [QueuedGameResult] {
+        store.load([QueuedGameResult].self, key: StoreKey.queuedGameResults) ?? []
+    }
+
+    func retryQueuedGames() async {
+        let queue = store.load([QueuedGameResult].self, key: StoreKey.queuedGameResults) ?? []
+        guard !queue.isEmpty else {
+            gamePendingSync = false
+            return
+        }
+        var remaining: [QueuedGameResult] = []
+        for item in queue {
+            do {
+                let response = try await api.submitGame(
+                    date: item.date, game: item.game, tz: item.tz, elapsedMs: item.elapsedMs,
+                    mistakes: item.mistakes, gaveUp: item.gaveUp, answer: item.answer
+                )
+                gameResults[Self.gameKey(date: item.date, game: item.game)] = response.result
+                streak = response.streak
+            } catch let error as KithError {
+                // `already_played` means the server has it: dropping it from the queue is
+                // the success path, exactly as for Lineup.
+                if case .api(_, let code, _) = error, code == "already_played" { continue }
+                remaining.append(item)
+            } catch {
+                remaining.append(item)
+            }
+        }
+        if remaining.isEmpty {
+            store.remove(key: StoreKey.queuedGameResults)
+            gamePendingSync = false
+            show(toast: "Your score synced.", isError: false)
+        } else {
+            store.save(remaining, key: StoreKey.queuedGameResults)
+            gamePendingSync = true
+        }
+    }
+
+    // MARK: Games presentation
+
+    /// "Solved" / "Gave up" / "Not solved" for `GameResultsView`.
+    static func gameHeadline(_ result: StoredGameResult) -> String {
+        if result.gaveUp { return "Gave up" }
+        return result.solved ? "Solved" : "Not solved"
+    }
+
+    /// The share text for a finished grid game (`GameShareText.render`).
+    func gameShareText(_ result: StoredGameResult, rows: [String]) -> String {
+        let number = activeGames[result.game]?.number ?? dailyRow(for: result.game)?.number ?? 0
+        return GameShareText.render(
+            game: result.game,
+            number: number,
+            elapsedMs: result.elapsedMs,
+            gaveUp: result.gaveUp,
+            rows: rows,
+            refCode: profile?.invite_code
+        )
+    }
+
+    /// `markShared`'s counterpart for a grid game: `GameResultsView` calls this instead,
+    /// since Lineup's `shareCompleted` flag (and its "Shared" label) is not this game's to
+    /// borrow — sharing Stars should not silently mark Lineup shared too (finding C5).
+    func markGameShared(_ kind: GameKind) {
+        Task { _ = try? await self.api.track("share_complete", props: ["date": self.today, "game": kind.rawValue]) }
+    }
+
+    /// "2nd of 5 friends on Stars today", or nil when nobody else has played.
+    func gameRankTeaser(for kind: GameKind) -> String? {
+        let board = HubGame.grid(kind).boardGame
+        let all = rows(kind: .friends, scopeId: nil, period: .today, game: board)
+        guard let me = all.first(where: \.isMe), let rank = me.rank else { return nil }
+        let played = all.filter(\.played).count
+        guard played > 1 else { return nil }
+        return "\(Self.ordinal(rank)) of \(played) friends on \(kind.title) today"
+    }
+
+    static func ordinal(_ value: Int) -> String {
+        switch value % 100 {
+        case 11, 12, 13: return "\(value)th"
+        default: break
+        }
+        switch value % 10 {
+        case 1: return "\(value)st"
+        case 2: return "\(value)nd"
+        case 3: return "\(value)rd"
+        default: return "\(value)th"
+        }
+    }
+
+    /// Days played and best solved time per grid game, for the profile breakdown.
+    var gameStats: [GameStat] {
+        GameKind.allCases.map { kind in
+            let mine = myGameResults.filter { $0.game == kind }
+            let best = mine.filter { $0.solved && !$0.gave_up }.map(\.elapsed_ms).min()
+            return GameStat(game: kind, daysPlayed: mine.count, bestMs: best)
+        }
+    }
+
     // MARK: - Results screen data
 
     var resultsSummary: ResultsSummary? {
@@ -542,8 +1070,9 @@ final class AppModel {
 
     // MARK: - Board
 
-    func rows(kind: BoardKind, scopeId: String?, period: BoardPeriod) -> [BoardDisplayRow] {
-        let key = BoardCacheKey(kind: kind, scopeId: scopeId, period: period, date: today)
+    func rows(kind: BoardKind, scopeId: String?, period: BoardPeriod,
+              game: BoardGame = .lineup) -> [BoardDisplayRow] {
+        let key = BoardCacheKey(kind: kind, scopeId: scopeId, period: period, date: today, game: game)
         let raw = boards[key] ?? []
         // Contact names are only used where the viewer actually knows the person.
         let overrides: [String: String] = kind == .everyone ? [:] : friendNames
@@ -557,19 +1086,35 @@ final class AppModel {
         )
     }
 
-    func boardHeader(kind: BoardKind, scopeId: String?, period: BoardPeriod) -> String {
-        let key = BoardCacheKey(kind: kind, scopeId: scopeId, period: period, date: today)
+    func boardHeader(kind: BoardKind, scopeId: String?, period: BoardPeriod,
+                     game: BoardGame = .lineup) -> String {
+        let key = BoardCacheKey(kind: kind, scopeId: scopeId, period: period, date: today, game: game)
         let raw = boards[key] ?? []
         let others = raw.filter { $0.user_id != myUserId }
         return BoardPresenter.headerText(played: others.filter(\.played).count, total: others.count)
     }
 
-    func refreshBoard(kind: BoardKind, scopeId: String?, period: BoardPeriod, force: Bool = false) async {
-        let key = BoardCacheKey(kind: kind, scopeId: scopeId, period: period, date: today)
+    /// Elapsed milliseconds per user for a cached board. `BoardDisplayRow` (KithCore, frozen)
+    /// carries no time, and the grid-game boards show time instead of a mini grid, so the
+    /// raw rows are consulted for that one column.
+    func elapsedMsByUser(kind: BoardKind, scopeId: String?, period: BoardPeriod,
+                         game: BoardGame) -> [String: Int] {
+        let key = BoardCacheKey(kind: kind, scopeId: scopeId, period: period, date: today, game: game)
+        var map: [String: Int] = [:]
+        for row in boards[key] ?? [] {
+            if let elapsed = row.elapsed_ms { map[row.user_id] = elapsed }
+        }
+        return map
+    }
+
+    func refreshBoard(kind: BoardKind, scopeId: String?, period: BoardPeriod,
+                      game: BoardGame = .lineup, force: Bool = false) async {
+        let key = BoardCacheKey(kind: kind, scopeId: scopeId, period: period, date: today, game: game)
         // A board that failed last time is never served from the cache: retry it.
         if !force, boards[key] != nil, !failedBoards.contains(key) { return }
         do {
-            let rows = try await api.board(kind: kind, scopeId: scopeId, period: period, date: today)
+            let rows = try await api.board(kind: kind, scopeId: scopeId, period: period,
+                                           date: today, game: game)
             boards[key] = rows
             failedBoards.remove(key)
         } catch {
@@ -868,7 +1413,32 @@ final class AppModel {
     // MARK: - Profile
 
     var heatmap: [HeatCell] {
-        ProfilePresenter.heatmap(results: myResults, today: today)
+        ProfilePresenter.heatmap(results: heatmapResults, today: today)
+    }
+
+    /// docs/07: a day counts when *any* game was played, so days with only a grid-game
+    /// result are folded in as synthetic Lineup rows. `tries: 2` keeps such a day "played"
+    /// rather than "solved on the first try" — a grid game has one attempt and no tries.
+    private var heatmapResults: [ResultSummary] {
+        struct Seed: Encodable {
+            let puzzle_date: String
+            let tries: Int
+            let solved: Bool
+            let score: Int
+        }
+        var byDate = Dictionary(myResults.map { ($0.puzzle_date, $0) },
+                                uniquingKeysWith: { first, _ in first })
+        for summary in myGameResults where byDate[summary.date] == nil {
+            // A gave-up day still counts as played for the heatmap (docs/07): only a day
+            // with no result at all is "unsolved" (finding B6).
+            guard let row = Self.decode(
+                Seed(puzzle_date: summary.date, tries: 2,
+                     solved: summary.solved || summary.gave_up, score: summary.score),
+                as: ResultSummary.self
+            ) else { continue }
+            byDate[summary.date] = row
+        }
+        return byDate.values.sorted { $0.puzzle_date < $1.puzzle_date }
     }
 
     var stats: ProfileStats {
@@ -878,6 +1448,9 @@ final class AppModel {
     func loadProfileData() async {
         if let results = try? await api.myResults(sinceDate: "2020-01-01") {
             myResults = results
+        }
+        if let games = try? await api.myGameResults(sinceDate: "2020-01-01") {
+            myGameResults = games
         }
         if let streakValue = try? await api.myStreak() { streak = streakValue }
         if let loaded = try? await api.profile() { profile = loaded }
@@ -933,6 +1506,14 @@ final class AppModel {
         circles = []
         selectedCircleId = nil
         myResults = []
+        dailyGames = []
+        gameResults = [:]
+        myGameResults = []
+        activeGames = [:]
+        openGameKind = nil
+        activeGameErrors = [:]
+        showGameResults = false
+        gamePendingSync = false
         directory = ContactDirectory()
         friends = []
         friendNames = [:]

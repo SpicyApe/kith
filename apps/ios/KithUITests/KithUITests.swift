@@ -30,7 +30,9 @@ import XCTest
         // 1d. Contacts pre-prompt — decline so the OS permission sheet never appears.
         awaitAndTap(app.buttons["onboarding.contacts.notNow"])
 
-        // 1e. Straight into today's puzzle.
+        // 1e. The games hub, then Lineup. (docs/07 turned the Today tab into the hub; the
+        // puzzle itself is one row down.)
+        openHubRow("lineup")
         awaitElement(element("today.prompt"), "Today's prompt never appeared")
         for index in 0...4 {
             awaitElement(element("today.tile.\(index)"), "today.tile.\(index) never appeared")
@@ -51,6 +53,7 @@ import XCTest
     func testSolveInOneTry() {
         let app = launch(state: "returning")
 
+        openHubRow("lineup")
         awaitElement(element("today.prompt"), "Today's prompt never appeared")
 
         let lockIn = awaitElement(app.buttons["today.lockIn"])
@@ -100,6 +103,7 @@ import XCTest
     func testAlreadyPlayedShowsCountdown() {
         launch(state: "played")
 
+        openHubRow("lineup")
         awaitElement(element("today.playedCard"), "today.playedCard never appeared")
         awaitElement(element("today.countdown"), "today.countdown never appeared")
     }

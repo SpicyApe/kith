@@ -99,6 +99,9 @@ import XCTest
 
         // MARK: Step 2 — play today's puzzle
 
+        // The Today tab is the games hub now (docs/07); Lineup is the first row on it.
+        openHubRow("lineup", "Step 2: hub.row.lineup never appeared on the Today tab")
+
         // Same two-way branch as step 1: today is either playable or already done. The
         // played card is checked first so it wins if both are momentarily on screen.
         let playedCard = element("today.playedCard")
@@ -173,6 +176,57 @@ import XCTest
             _ = tapIfPresent(app.buttons["onboarding.friends.seeBoard"])
             _ = tapIfPresent(app.buttons["onboarding.notifications.no"])
             step("3. results dismissed")
+        }
+
+        // MARK: Step 3b — a grid game: open Stars from the hub and give up
+
+        // Solving a real 8×8 Stars blind is not feasible in a test, so this exercises the
+        // start → give up → submit-game → results path instead (PLAN-games.md §"Tests").
+        popToHub()
+        let starsRow = element("hub.row.stars")
+        // `waitForExistence && isEnabled` reads `isEnabled` once, immediately after the
+        // existence check returns — before `dailyGames` has necessarily landed and enabled
+        // the row — so this step almost always self-skipped (finding B3). Polling the
+        // predicate instead waits out that window the same way `awaitEnabled` does
+        // elsewhere, but without failing the test when the row never enables (Stars may
+        // simply already be played).
+        let starsEnabled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isEnabled == true"), object: starsRow
+        )
+        if XCTWaiter().wait(for: [starsEnabled], timeout: Self.timeout) == .completed {
+            starsRow.tap()
+            step("3b. Stars opened")
+
+            let giveUp = app.buttons["game.giveUp"]
+            let giveUpEnabled = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "isEnabled == true"), object: giveUp
+            )
+            if XCTWaiter().wait(for: [giveUpEnabled], timeout: Self.timeout) == .completed {
+                giveUp.tap()
+                // The destructive button of a `confirmationDialog` does not always surface
+                // its identifier; its title is unique on screen either way.
+                if !tapIfPresent(element("game.giveUp.confirm"), within: Self.optionalTimeout) {
+                    awaitAndTap(app.buttons["Give up"],
+                                "Step 3b: the give-up confirmation never appeared")
+                }
+                step("3b. gave up")
+
+                assertLabelContains(element("gameResults.headline"), "Gave up",
+                                    "Step 3b: the Stars results headline should read \"Gave up\"")
+                awaitElement(element("gameResults.score"),
+                             "Step 3b: gameResults.score never appeared")
+
+                if !tapIfPresent(app.buttons["Close results"]) {
+                    _ = tapIfPresent(app.buttons["Done"])
+                }
+                step("3b. Stars results dismissed")
+            } else {
+                // Stars was already played today (a re-run before the account was deleted):
+                // the host screen shows the stored result instead of a playable grid.
+                step("3b. Stars already played — skipped")
+            }
+        } else {
+            step("3b. Stars not available today — skipped")
         }
 
         // MARK: Step 4 — the board

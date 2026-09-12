@@ -12,9 +12,10 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../LineupEngine"),
+        .package(path: "../GridGames"),
     ],
     targets: [
-        .target(name: "KithCore", dependencies: ["LineupEngine"], path: "Sources/KithCore"),
-        .testTarget(name: "KithCoreTests", dependencies: ["KithCore", "LineupEngine"], path: "Tests/KithCoreTests"),
+        .target(name: "KithCore", dependencies: ["LineupEngine", "GridGames"], path: "Sources/KithCore"),
+        .testTarget(name: "KithCoreTests", dependencies: ["KithCore", "LineupEngine", "GridGames"], path: "Tests/KithCoreTests"),
     ]
 )

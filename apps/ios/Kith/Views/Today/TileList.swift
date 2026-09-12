@@ -87,6 +87,7 @@ private struct TileRow: View {
     let onMoveDown: () -> Void
 
     @State private var pulsing = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var background: Color {
         if isLocked { return .tileCorrect }
@@ -141,7 +142,7 @@ private struct TileRow: View {
         .padding(.horizontal, 14)
         .frame(maxWidth: .infinity)
         .background(background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .animation(.easeInOut(duration: 0.25), value: background)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: background)
         .accessibilityElement(children: .combine)
         // TESTING.md §3 pins the label to the item label; position and state ride along
         // as the value, so VoiceOver still reads "Telephone, position 1, not placed yet".
@@ -174,7 +175,9 @@ private struct TileRow: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.footnote.weight(.semibold))
-                .frame(width: 28, height: 28)
+                // 44 pt tall so the target meets the HIG minimum; the width stays narrow
+                // because two of these sit beside a full-width tile on a 375 pt screen.
+                .frame(width: 32, height: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

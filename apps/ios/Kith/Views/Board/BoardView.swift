@@ -11,6 +11,8 @@ struct BoardView: View {
 
     @State private var kind: BoardKind = .friends
     @State private var period: BoardPeriod = .today
+    /// docs/07: the boards gained a per-game column, plus a summed Total.
+    @State private var game: BoardGame = .lineup
     @State private var reactingTo: String?
 
     private var scopeId: String? {
@@ -18,7 +20,7 @@ struct BoardView: View {
     }
 
     private var rows: [BoardDisplayRow] {
-        model.rows(kind: kind, scopeId: scopeId, period: period)
+        model.rows(kind: kind, scopeId: scopeId, period: period, game: game)
     }
 
     var body: some View {
@@ -46,6 +48,14 @@ struct BoardView: View {
                 .accessibilityLabel("Which period")
                 .accessibilityIdentifier("board.period")
 
+                // A `Menu` picks up the slack on any width where the five-segment control
+                // would clip; the segmented control is listed first so it wins on every
+                // simulator size the hermetic UI tests run against (finding C2).
+                ViewThatFits {
+                    segmentedGamePicker
+                    gameMenuPicker
+                }
+
                 if kind == .circle {
                     circleChips
                 }
@@ -57,7 +67,7 @@ struct BoardView: View {
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .navigationTitle("Board")
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarTitleDisplayMode(.large)
             .task(id: reloadKey) { await reload(force: false) }
             // Arriving at the board is what completes the "friends found" onboarding
             // step; FriendsFoundStep's button only switches tabs.
@@ -73,14 +83,15 @@ struct BoardView: View {
     }
 
     private var reloadKey: String {
-        "\(kind.rawValue)|\(scopeId ?? "")|\(period.rawValue)|\(model.today)"
+        "\(kind.rawValue)|\(scopeId ?? "")|\(period.rawValue)|\(game.rawValue)|\(model.today)"
     }
 
     private func reload(force: Bool) async {
         if kind == .circle, model.circles.isEmpty {
             await model.loadCircles()
         }
-        await model.refreshBoard(kind: kind, scopeId: scopeId, period: period, force: force)
+        await model.refreshBoard(kind: kind, scopeId: scopeId, period: period,
+                                 game: game, force: force)
     }
 
     /// A method rather than a body inside `.task`, because `.task` takes a `@Sendable`
@@ -99,7 +110,7 @@ struct BoardView: View {
         switch kind {
         case .friends:
             HStack {
-                Text(model.boardHeader(kind: .friends, scopeId: nil, period: period))
+                Text(model.boardHeader(kind: .friends, scopeId: nil, period: period, game: game))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("board.header")
@@ -115,6 +126,8 @@ struct BoardView: View {
                         model.show(toast: "Code copied.", isError: false)
                     } label: {
                         Image(systemName: "doc.on.doc")
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Copy the circle code")
                     Spacer()
@@ -161,6 +174,58 @@ struct BoardView: View {
         }
     }
 
+    // MARK: Game picker (docs/07, finding C2)
+
+    private var segmentedGamePicker: some View {
+        Picker("Game", selection: $game) {
+            Text("Lineup").tag(BoardGame.lineup)
+            Text("Stars").tag(BoardGame.stars)
+            Text("Duo").tag(BoardGame.duo)
+            Text("Trail").tag(BoardGame.trail)
+            Text("Total").tag(BoardGame.total)
+        }
+        .pickerStyle(.segmented)
+        .controlSize(.small)
+        .accessibilityLabel("Which game")
+        .accessibilityIdentifier("board.game")
+    }
+
+    /// Same choices, as a `Menu` for widths the segmented control does not fit.
+    private var gameMenuPicker: some View {
+        Menu {
+            Picker("Game", selection: $game) {
+                Text("Lineup").tag(BoardGame.lineup)
+                Text("Stars").tag(BoardGame.stars)
+                Text("Duo").tag(BoardGame.duo)
+                Text("Trail").tag(BoardGame.trail)
+                Text("Total").tag(BoardGame.total)
+            }
+        } label: {
+            HStack {
+                Text(gameLabel(game))
+                    .font(.subheadline.weight(.medium))
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption)
+            }
+            .foregroundStyle(Color.primary)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .background(Capsule().fill(Color.secondary.opacity(0.12)))
+        }
+        .accessibilityLabel("Which game")
+        .accessibilityIdentifier("board.game")
+    }
+
+    private func gameLabel(_ game: BoardGame) -> String {
+        switch game {
+        case .lineup: return "Lineup"
+        case .stars: return "Stars"
+        case .duo: return "Duo"
+        case .trail: return "Trail"
+        case .total: return "Total"
+        }
+    }
+
     // MARK: Rows
 
     @ViewBuilder
@@ -171,30 +236,37 @@ struct BoardView: View {
         let played = all.filter(\.played)
         let unplayed = all.filter { !$0.played }
 
+        let times = model.elapsedMsByUser(kind: kind, scopeId: scopeId, period: period, game: game)
+
         if all.isEmpty {
             emptyState
         } else {
             List {
                 ForEach(played) { row in
-                    BoardRowView(row: row, period: period, showReactions: kind != .everyone) {
+                    BoardRowView(row: row, period: period, game: game,
+                                 timeText: timeText(for: row, times: times),
+                                 showReactions: kind != .everyone) {
                         reactingTo = row.userId
                     }
                 }
                 if !unplayed.isEmpty {
                     Section("Haven't played yet") {
                         ForEach(unplayed) { row in
-                            BoardRowView(row: row, period: period, showReactions: false, onReact: {})
+                            BoardRowView(row: row, period: period, game: game, timeText: nil,
+                                         showReactions: false, onReact: {})
                                 .opacity(0.55)
                         }
                     }
                 }
             }
-            .listStyle(.plain)
+            .listStyle(.insetGrouped)
             // docs/03 §4: your own row sticks to the bottom once the list is long
             // enough that it can scroll out of view.
             .safeAreaInset(edge: .bottom) {
                 if all.count > 8, let me = all.first(where: \.isMe) {
-                    BoardRowView(row: me, period: period, showReactions: false, onReact: {})
+                    BoardRowView(row: me, period: period, game: game,
+                                 timeText: timeText(for: me, times: times),
+                                 showReactions: false, onReact: {})
                         .padding(.horizontal, 8)
                         .padding(.vertical, 6)
                         .background(.regularMaterial)
@@ -218,6 +290,18 @@ struct BoardView: View {
                 }
                 Button("Cancel", role: .cancel) { reactingTo = nil }
             }
+        }
+    }
+
+    /// docs/07: grid-game boards show the solve time where Lineup shows its mini grid.
+    /// Total shows the summed score only, so no time there either.
+    private func timeText(for row: BoardDisplayRow, times: [String: Int]) -> String? {
+        guard period == .today, row.played else { return nil }
+        switch game {
+        case .lineup, .total: return nil
+        case .stars, .duo, .trail:
+            guard let elapsed = times[row.userId] else { return nil }
+            return AppModel.clock(elapsed)
         }
     }
 
@@ -300,6 +384,10 @@ struct BoardView: View {
 struct BoardRowView: View {
     let row: BoardDisplayRow
     let period: BoardPeriod
+    /// Which column this board is showing (docs/07). Lineup keeps the mini grid; the grid
+    /// games show `timeText`; Total shows the score alone.
+    var game: BoardGame = .lineup
+    var timeText: String?
     let showReactions: Bool
     let onReact: () -> Void
 
@@ -332,8 +420,12 @@ struct BoardRowView: View {
 
             Spacer(minLength: 8)
 
-            if period == .today, !row.miniGrid.isEmpty {
+            if game == .lineup, period == .today, !row.miniGrid.isEmpty {
                 MiniGrid(feedback: row.miniGrid)
+            } else if let timeText {
+                Text(timeText)
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
 
             Text(row.played ? "\(row.score)" : "—")
@@ -345,7 +437,10 @@ struct BoardRowView: View {
                     onReact()
                 } label: {
                     Image(systemName: row.myReaction == nil ? "face.smiling" : "face.smiling.inverse")
-                        .font(.footnote)
+                        .font(.body)
+                        // HIG: a 44 pt target even though the glyph is small.
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("React to \(row.name)")
@@ -372,6 +467,7 @@ struct BoardRowView: View {
         if let rank = row.rank { parts.append("rank \(rank)") }
         parts.append(row.name)
         parts.append(row.played ? "score \(row.score)" : "hasn't played yet")
+        if let timeText, row.played { parts.append("time \(timeText)") }
         if let taunt = row.taunt, !taunt.isEmpty { parts.append("says \(taunt)") }
         return parts.joined(separator: ", ")
     }

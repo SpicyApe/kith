@@ -5,6 +5,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.116.0";
 import { handleGenerate } from "./handler.ts";
 import type { GenerateRequest } from "./handler.ts";
+import { GAME_KINDS, type GameKind } from "../_shared/games/common.ts";
 import { SupabaseGenerateStore } from "./store.ts";
 import {
   badJson,
@@ -24,6 +25,14 @@ function forbidden(): Response {
 
 function badDate(): Response {
   return jsonResponse(400, { error: "bad date", code: "bad_request" });
+}
+
+function badGame(): Response {
+  return jsonResponse(400, { error: "bad game", code: "bad_request" });
+}
+
+function gameWithoutDate(): Response {
+  return jsonResponse(400, { error: "game requires date", code: "game_without_date" });
 }
 
 Deno.serve(async (req) => {
@@ -63,6 +72,11 @@ Deno.serve(async (req) => {
       if (!DATE_RE.test(raw.date)) return badDate();
       body.date = raw.date;
     }
+    if (raw.game !== undefined && raw.game !== null) {
+      if (typeof raw.game !== "string" || !GAME_KINDS.includes(raw.game as GameKind)) return badGame();
+      body.game = raw.game as GameKind;
+    }
+    if (body.game !== undefined && body.date === undefined) return gameWithoutDate();
     if (typeof raw.daysAhead === "number") {
       // Clamp to [1, 90] so a client-supplied daysAhead can't force an
       // unbounded (or zero/negative) generation run; a non-finite value
@@ -79,6 +93,12 @@ Deno.serve(async (req) => {
     const pe = e as { code?: string; message?: string };
     if (pe.code === "not_pending") {
       return jsonResponse(409, { error: "not pending", code: "not_pending" });
+    }
+    if (pe.code === "not_found") {
+      return jsonResponse(404, { error: "not found", code: "not_found" });
+    }
+    if (pe.code === "has_results") {
+      return jsonResponse(409, { error: "has results", code: "has_results" });
     }
     console.error("handler_error", { code: pe.code, message: pe.message?.slice(0, 200) });
     return internalError();

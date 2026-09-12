@@ -1,0 +1,79 @@
+[
+  {
+    "game": "stars",
+    "spec": {
+      "n": 5,
+      "regions": [
+        [0, 0, 0, 0, 0],
+        [1, 1, 1, 1, 1],
+        [2, 2, 2, 2, 2],
+        [3, 3, 3, 3, 3],
+        [4, 4, 4, 4, 4]
+      ]
+    },
+    "answer": [1, 3, 0, 2, 4],
+    "shareRows": [
+      "⬛️⭐️⬛️⬛️⬛️",
+      "⬛️⬛️⬛️⭐️⬛️",
+      "⭐️⬛️⬛️⬛️⬛️",
+      "⬛️⬛️⭐️⬛️⬛️",
+      "⬛️⬛️⬛️⬛️⭐️"
+    ],
+    "number": 12,
+    "elapsedMs": 83000,
+    "gaveUp": false,
+    "refCode": "7F3Q",
+    "shareText": "Kith Stars #12 · 1:23\n⬛️⭐️⬛️⬛️⬛️\n⬛️⬛️⬛️⭐️⬛️\n⭐️⬛️⬛️⬛️⬛️\n⬛️⬛️⭐️⬛️⬛️\n⬛️⬛️⬛️⬛️⭐️\nkith.app/g/stars/12?r=7F3Q"
+  },
+  {
+    "game": "duo",
+    "spec": {
+      "n": 6,
+      "givens": [
+        [0, null, null, null, null, null],
+        [null, 1, null, null, null, null],
+        [null, null, 0, null, null, null],
+        [null, null, null, 0, null, null],
+        [null, null, null, null, 0, null],
+        [null, null, null, null, null, 0]
+      ],
+      "eq": [[0, 0, 0, 1]],
+      "ne": [[0, 1, 0, 2]]
+    },
+    "answer": [
+      [0, 0, 1, 1, 0, 1],
+      [1, 1, 0, 0, 1, 0],
+      [0, 1, 0, 1, 1, 0],
+      [1, 0, 1, 0, 0, 1],
+      [1, 0, 0, 1, 0, 1],
+      [0, 1, 1, 0, 1, 0]
+    ],
+    "shareRows": [
+      "●●○○●○",
+      "○○●●○●",
+      "●○●○○●",
+      "○●○●●○",
+      "○●●○●○",
+      "●○○●○●"
+    ],
+    "number": 12,
+    "elapsedMs": 83000,
+    "gaveUp": false,
+    "refCode": "7F3Q",
+    "shareText": "Kith Duo #12 · 1:23\n●●○○●○\n○○●●○●\n●○●○○●\n○●○●●○\n○●●○●○\n●○○●○●\nkith.app/g/duo/12?r=7F3Q"
+  },
+  {
+    "game": "trail",
+    "spec": {
+      "n": 3,
+      "waypoints": [[0, 0], [1, 1], [2, 2]]
+    },
+    "answer": [[0, 0], [0, 1], [0, 2], [1, 2], [1, 1], [1, 0], [2, 0], [2, 1], [2, 2]],
+    "shareRows": ["🟩🟩🟩"],
+    "number": 12,
+    "elapsedMs": 83000,
+    "gaveUp": false,
+    "refCode": "7F3Q",
+    "shareText": "Kith Trail #12 · 1:23\n🟩🟩🟩\nkith.app/g/trail/12?r=7F3Q"
+  }
+]

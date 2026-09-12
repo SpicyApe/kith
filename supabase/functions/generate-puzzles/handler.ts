@@ -4,6 +4,13 @@
 // review page's "Reseed" can produce a different puzzle by bumping the seed.
 // Rules from docs/02 §1 "Content pipeline".
 
+import type { GameKind, GeneratedGame } from "../_shared/games/common.ts";
+import { GAME_KINDS, gameSeedFor } from "../_shared/games/common.ts";
+import { generateDailyGame } from "../_shared/games/generate.ts";
+
+/** Wall-clock budget for the grid-games fill pass, so one slow/misbehaving run can't hang forever. */
+const GAMES_TIME_BUDGET_MS = 60_000;
+
 export interface ListRow {
   id: number;
   // Unused by generatePuzzle itself; carried through for the admin review page.
@@ -268,11 +275,28 @@ export interface GenerateStore {
   replace(p: GeneratedPuzzle): Promise<void>;
   /** Current seed stored for a date's puzzle, to bump on reseed. Null if no puzzle. */
   seedOf(date: string): Promise<number | null>;
+
+  // Grid games (daily_games; docs/07-games-hub.md). Rows are approved on insert:
+  // the uniqueness solver proves correctness, so there is no review step.
+  /** `${date}#${game}` keys that already exist in [from, to]. */
+  existingGames(from: string, to: string): Promise<string[]>;
+  /** max(number) + 1 for the game, or 1. */
+  nextGameNumber(game: GameKind): Promise<number>;
+  insertGame(date: string, g: GeneratedGame, number: number): Promise<void>;
+  /**
+   * Replace spec/solution/difficulty/seed for an existing (date, game); throws `code: "not_found"`
+   * if absent, or `code: "has_results"` if anyone has already played it (`game_results` has a row
+   * for that date+game) — reseeding would invalidate a submitted result.
+   */
+  replaceGame(date: string, g: GeneratedGame): Promise<void>;
+  gameSeedOf(date: string, game: GameKind): Promise<number | null>;
 }
 
 export interface GenerateRequest {
-  /** Reseed exactly this date (must be pending). */
+  /** Reseed exactly this date (Lineup must be pending; grid games may be reseeded any time). */
   date?: string;
+  /** With `date`: reseed only this grid game instead of Lineup. */
+  game?: GameKind;
   /** Default 30. */
   daysAhead?: number;
 }
@@ -282,10 +306,26 @@ export interface GenerateReport {
   replaced: string[];
   /** Dates for which no valid puzzle could be generated. */
   skipped: string[];
+  /** Grid games, keyed `${date}#${game}`. */
+  games: { created: string[]; replaced: string[]; skipped: string[] };
 }
 
 /**
  * Behaviour:
+ * - Grid games: when `req.date` and `req.game` are set, reseed that one game: read the current
+ *   seed via `gameSeedOf`, then try attempt = 1, 2, … (max 20), skipping any attempt whose
+ *   `gameSeedFor(date, game, attempt)` equals the current seed (so a reseed is never a no-op),
+ *   until `generateDailyGame` returns non-null, then `replaceGame` and report under
+ *   `games.replaced` (or `games.skipped` if every attempt failed or was skipped). A `has_results`
+ *   error from `replaceGame` propagates to the caller (mapped to 409 by index.ts). When filling
+ *   ahead (no `req.date`), for every date in range and every game in GAME_KINDS whose
+ *   `${date}#${game}` is not in existingGames: attempt 0..4 until a game generates, insertGame
+ *   with the next number for that game, report under `games.created` / `games.skipped`. Each
+ *   `(date, game)` body runs in its own try/catch: a failure is logged and the key pushed to
+ *   `games.skipped` rather than aborting the rest of the run, and the whole games pass stops
+ *   early (skipping every remaining key) once `GAMES_TIME_BUDGET_MS` has elapsed. Lineup handling
+ *   below is unchanged and runs first (also try/catch per date, degrading to `skipped`);
+ *   `req.date` without `req.game` reseeds Lineup only.
  * - If `req.date` is set: seed = (seedOf(date) ?? seedFor(date, 0)) + 1; generatePuzzle; replace(); report replaced (or skipped).
  *   Usage for the reseed must EXCLUDE that date's own current puzzle (the store's usage(from) with from = date already
  *   includes it — so the handler filters out uses whose date === req.date).
@@ -298,6 +338,29 @@ export async function handleGenerate(
   now: Date,
   store: GenerateStore,
 ): Promise<GenerateReport> {
+  const startedAt = Date.now();
+  const games: GenerateReport["games"] = { created: [], replaced: [], skipped: [] };
+
+  // A single grid game reseed: `date` + `game` never touches Lineup.
+  if (req.date !== undefined && req.game !== undefined) {
+    const date = req.date;
+    const game = req.game;
+    const key = `${date}#${game}`;
+    const cur = await store.gameSeedOf(date, game);
+    let generated: GeneratedGame | null = null;
+    for (let attempt = 1; attempt <= 20 && generated === null; attempt++) {
+      if (gameSeedFor(date, game, attempt) === cur) continue;
+      generated = generateDailyGame(game, date, attempt);
+    }
+    if (generated === null) {
+      games.skipped.push(key);
+    } else {
+      await store.replaceGame(date, generated);
+      games.replaced.push(key);
+    }
+    return { created: [], replaced: [], skipped: [], games };
+  }
+
   const lists = await store.lists();
   const items = await store.items();
 
@@ -314,10 +377,10 @@ export async function handleGenerate(
 
     const generated = generatePuzzle(date, lists, items, usage, seed);
     if (generated === null) {
-      return { created: [], replaced: [], skipped: [date] };
+      return { created: [], replaced: [], skipped: [date], games };
     }
     await store.replace(generated);
-    return { created: [], replaced: [date], skipped: [] };
+    return { created: [], replaced: [date], skipped: [], games };
   }
 
   // Number.isFinite guards against NaN/Infinity (and undefined) reaching
@@ -345,22 +408,67 @@ export async function handleGenerate(
     const date = addDaysUTC(today, i);
     if (existing.has(date)) continue;
 
-    const seed = seedFor(date, 0);
-    const generated = generatePuzzle(date, lists, items, usage, seed);
-    if (generated === null) {
+    try {
+      const seed = seedFor(date, 0);
+      const generated = generatePuzzle(date, lists, items, usage, seed);
+      if (generated === null) {
+        skipped.push(date);
+        continue;
+      }
+
+      await store.insert(generated, nextNumber);
+      created.push(date);
+      nextNumber++;
+
+      usage.listUses.push({ listId: generated.listId, date });
+      for (const itemId of generated.itemIds) {
+        usage.itemUses.push({ itemId, date });
+      }
+    } catch (e) {
+      console.error("lineup_failed", date, (e as Error).message);
       skipped.push(date);
-      continue;
-    }
-
-    await store.insert(generated, nextNumber);
-    created.push(date);
-    nextNumber++;
-
-    usage.listUses.push({ listId: generated.listId, date });
-    for (const itemId of generated.itemIds) {
-      usage.itemUses.push({ itemId, date });
     }
   }
 
-  return { created, replaced: [], skipped };
+  // Grid games: fill every (date, game) in range that has no row yet.
+  const existingGameKeys = daysAhead > 0 ? new Set(await store.existingGames(from, to)) : new Set<string>();
+  const nextGameNumber = new Map<GameKind, number>();
+  if (daysAhead > 0) {
+    for (const game of GAME_KINDS) {
+      nextGameNumber.set(game, await store.nextGameNumber(game));
+    }
+  }
+
+  for (let i = 0; i < daysAhead; i++) {
+    const date = addDaysUTC(today, i);
+    for (const game of GAME_KINDS) {
+      const key = `${date}#${game}`;
+      if (existingGameKeys.has(key)) continue;
+
+      if (Date.now() - startedAt > GAMES_TIME_BUDGET_MS) {
+        games.skipped.push(key);
+        continue;
+      }
+
+      try {
+        let generated: GeneratedGame | null = null;
+        for (let attempt = 0; attempt < 5 && generated === null; attempt++) {
+          generated = generateDailyGame(game, date, attempt);
+        }
+        if (generated === null) {
+          games.skipped.push(key);
+          continue;
+        }
+        const number = nextGameNumber.get(game)!;
+        await store.insertGame(date, generated, number);
+        nextGameNumber.set(game, number + 1);
+        games.created.push(key);
+      } catch (e) {
+        console.error("game_failed", key, (e as Error).message);
+        games.skipped.push(key);
+      }
+    }
+  }
+
+  return { created, replaced: [], skipped, games };
 }

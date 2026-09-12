@@ -15,6 +15,8 @@ packages:
     path: ../../packages/LineupEngine
   KithCore:
     path: ../../packages/KithCore
+  GridGames:
+    path: ../../packages/GridGames
   Supabase:
     url: https://github.com/supabase/supabase-swift
     from: "2.24.0"
@@ -45,6 +47,7 @@ targets:
     dependencies:
       - package: LineupEngine
       - package: KithCore
+      - package: GridGames
       - package: Supabase
         product: Supabase
     info:
@@ -90,6 +93,7 @@ targets:
       - target: Kith
       - package: LineupEngine
       - package: KithCore
+      - package: GridGames
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.kith.ios.tests

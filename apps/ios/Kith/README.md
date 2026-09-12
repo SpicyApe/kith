@@ -117,6 +117,148 @@ machine, so none of this has seen a compiler).
    the same code; the unit test drives the overload because a simulator has no contacts
    permission.
 
+## Games hub
+
+Built from `apps/ios/PLAN-games.md` against `docs/07-games-hub.md`. New files:
+
+| File | What it does |
+|---|---|
+| `Model/GameSession.swift` | `GameEngine` (the `stars`/`duo`/`trail` engine enum), `ActiveGame`, `GameStat`. |
+| `Views/Today/HubView.swift` | The Today tab: streak + countdown header, four rows, `NavigationStack` that pushes the play screens. `HubDestination` lives here. |
+| `Views/Games/GameHostView.swift` | Shared chrome: nav-bar timer, Reset / Give up / Done, the give-up confirmation, the results cover. |
+| `Views/Games/GridMetrics.swift` | Cell geometry (touch → `GridPoint`, `GridPoint` → centre) and the 12-colour / 12-glyph region palette. |
+| `Views/Games/StarsView.swift`, `DuoView.swift`, `TrailView.swift` | The three grids. |
+| `Views/Games/GameResultsView.swift` | Headline / score / time / share-row preview / streak / rank teaser / Share + Copy. |
+
+`GameResultsView.close()` (its "Done" button) only flips `model.showGameResults` to
+`false` now — it used to also call `dismiss()` on its own `@Environment(\.dismiss)`, racing
+that against `GameHostView`'s `fullScreenCover(isPresented: $model.showGameResults)`
+reacting to the same flip and popping itself. `GameHostView`'s `onChange(of:
+model.showGameResults)` does the one pop, wrapped in `Task { @MainActor in dismiss() }` so
+it runs after the cover's own dismissal has started rather than alongside it.
+
+`TodayView` keeps its identifiers and behaviour but lost its own `NavigationStack`, because
+`HubView` pushes it now. `AppModel` gained `dailyGames`, `gameResults`, `myGameResults`,
+`activeGames: [GameKind: ActiveGame]`, `showGameResults`, `gamePendingSync`, the
+start/finish/give-up/reset methods, the per-move mutators (`starsCycle`, `starsPaintCross`,
+`duoCycle`, `trailExtend`, `trailRetract`), the `QueuedGameResult` queue, and a `game:`
+parameter on `BoardCacheKey`, `rows`, `boardHeader` and `refreshBoard` (defaulted to
+`.lineup`, so no existing call site or test changed).
+
+`activeGames` is a dictionary, not a single slot, so opening a second grid game while the
+first is unfinished cannot silently discard it (a reviewer finding against the original
+single-`activeGame` design). `AppModel.activeGame` (singular) survives as a computed
+convenience — `openGameKind.flatMap { activeGames[$0] }` — for the handful of call sites
+that only ever care about "whichever game is currently open" (the internal mutators, the
+three grid views' `.sensoryFeedback` triggers); `GameHostView` and `GameResultsView` read
+`activeGames[kind]` directly instead, since they already know their own kind. A failed
+`startGame` now also records `activeGameErrors[kind]`, and `GameHostView` shows that message
+with a `game.retry` button instead of spinning on `ProgressView` forever; an already-played
+game's card gained a `game.showResult` button that reopens `GameResultsView`.
+
+Two smaller behaviour fixes worth knowing about if a test's expected numbers look wrong:
+Duo's mistake counter no longer books the transient conflict a cell's *first* tap can put it
+in (`empty → ●` on the way to `●` or `○`) — only the second and third taps of a cycle can be
+a real mistake, since the first is never a finished answer. And the profile heatmap now
+folds a gave-up-only day in as "played" (`solved || gave_up`), matching how `hubStatus`
+already treated it — previously such a day rendered as unsolved on the heatmap despite the
+hub showing "Gave up".
+
+### Previously blocking, now resolved: the four KithCore contract stubs
+
+`Games.swift` (`StartedGame.init(from:)`, `GameAnswer.encode(to:)`) and `KithAPI.swift`
+(`SupabaseKithAPI.startGame`, `submitGame`, `myGameResults`, `dailyGames`) were
+`fatalError("implement")` stubs at one point; a later backend round filled all four in, so
+`KithLiveTests` no longer crashes at `hub.row.stars`. `FakeKithAPI.json(_:)` still renders
+answer JSON independently rather than calling the now-real `GameAnswer.encode(to:)` — see
+that method's doc comment — so `GamesTests`' `answerJSON` assertions check the fake's
+output against a hand-written expectation, not `GameAnswer.encode` marking its own homework.
+
+`submit-game` also gained a fifth failure mode beyond `already_played`: a 409 with code
+`no_start` when the caller never called `start_game` for that (date, game). `AppModel`'s
+grid-game submit path (`submitGame(kind:elapsedMs:...)`) treats it as transient — it
+replays `start_game` once and retries the submit exactly once more, only falling back to
+the offline queue if that retry also fails. `FakeKithAPI.failNextGameSubmitWithNoStart`
+exercises this in `GamesTests`.
+
+### APIs I was not sure of (no Swift/iOS toolchain on the authoring machine)
+
+1. **`.sensoryFeedback(_:trigger:)`** (iOS 17) on the three grids and on `TileList`. The
+   trigger values are `activeGame?.moves`, `activeGame?.mistakes`, `engine.isComplete` and
+   `engine.currentOrder`. If the overload resolution complains about the optional triggers,
+   give each one a non-optional default at the call site.
+2. **`@Environment(\.accessibilityDifferentiateWithoutColor)`** in `StarsView`. That is the
+   spelling on iOS 17; it is a `Bool`.
+3. **`ToolbarItem(placement: .principal)`** for `game.timer`. If a `TimelineView` in the
+   principal slot misbehaves, move the timer into the leading slot or under the grid — only
+   the identifier is contractual. The principal item now also carries the game's title
+   (`Text(kind.title)` above the timer): a plain `.navigationTitle` is hidden the moment a
+   `.principal` item is present, and an earlier revision left the title with nothing to show
+   because of that (a reviewer finding). `GridMetrics.spacing(for:base:)` and
+   `GameHostView.hostHorizontalPadding` both tighten (1 pt spacing, 8 pt host padding) once
+   a grid reaches 9×9, since Trail's `n` can go that high and the normal 2–3 pt / 16 pt
+   values push cells below a comfortable tap target at that size.
+4. **SF Symbol names.** `diamond.fill`, `rhombus.fill`, `capsule.fill`, `seal.fill`,
+   `octagon.fill`, `pentagon.fill` and `moon.fill` (region glyphs),
+   `calendar.badge.exclamationmark`, and `GameKind.symbolName`'s
+   `point.topleft.down.to.point.bottomright.curvepath` (from the GridGames contract). All
+   are SF Symbols 4 / iOS 16 names; a missing one renders as a blank, not a build error.
+5. **`.font(.system(.largeTitle, design: .rounded, weight: .bold))`** — the text-style
+   overload that replaced every `Font.system(size:)` in the HIG pass. If the three-argument
+   form is unavailable, use `.font(.system(.largeTitle, design: .rounded).weight(.bold))`.
+6. **`DragGesture(minimumDistance: 0)` on the grid container.** Stars and Trail put one
+   gesture on the whole board and map the touch with `GridMetrics.point(at:)`; a press with
+   no movement falls through to `onEnded` as a tap. The grids are deliberately not inside a
+   `ScrollView` so nothing competes for the drag. Duo needs no drag and uses one `Button`
+   per cell instead.
+7. **`StoredGameResult` / `GameResultSummary` / `ResultSummary` bridging.** None of KithCore's
+   wire structs has a public memberwise init, so `AppModel.decode(_:as:)` encodes a local
+   seed with identical field names and decodes the real type — the same trick `FakeKithAPI`
+   already used. Any field-name drift surfaces at runtime as a nil, not at compile time.
+8. **`NavigationLink(value:)` + `.navigationDestination(for: HubDestination.self)`** with
+   `.disabled()` on rows for games the server did not publish. The UI tests wait for a row
+   to become *enabled* before tapping, because `dailyGames` lands asynchronously.
+9. **`BoardGame.total`.** `FakeKithAPI.board` returns the same friend rows whatever the
+   `game` argument is, so `testBoardGamePicker` proves the picker and the cache key, not the
+   server's summing.
+
+### Deviations from PLAN-games.md
+
+- **The `board.game` picker is `ViewThatFits { segmented; Menu }`, segmented listed first.**
+  An earlier revision hard-coded `.segmented` on the theory that every iPhone portrait width
+  is compact enough to fit five six-character labels; a reviewer flagged that as fragile
+  against Dynamic Type and narrower devices, so it now falls back to a `Menu` (same
+  `board.game` identifier either way) when the segmented control does not fit. Segmented is
+  listed first in `ViewThatFits` specifically so the CI simulator's width keeps taking that
+  branch and `testBoardGamePicker`'s `picker.buttons["Total"]` lookup stays valid.
+- **The fake Duo grid is not exactly the six rows the brief listed.** `100011` (row 2) has
+  three consecutive ●, which is illegal in Tango, and the columns force that row given the
+  other five — so the grid as specified can never be completed. A brute force over all 11 222
+  valid 6×6 Tango grids found the closest legal one, which keeps four of the six rows:
+  `001101 / 010011 / 100110 / 011001 / 110100 / 101010` (rows 1 and 2 differ).
+- **Stars regions are the five rows.** The brief allowed "any connected partition" where
+  region *r* holds its own star; rows are the smallest such partition and make the expected
+  taps trivial to state in TESTING.md.
+- **`gameResults` is keyed `"<date>#<game>"` as planned, but is populated from two shapes** —
+  `submitGame`'s `StoredGameResult` directly, and `myGameResults`'s `GameResultSummary` via
+  the bridge above (with `mistakes: 0`, since that column is not in the summary select).
+- **The offline queue holds an array, not a single entry.** Three grid games can be played
+  in one offline session; Lineup's single-slot `queuedResult` is unchanged.
+- **A played game's host screen shows a read-only card instead of re-starting the puzzle**,
+  and `startGame` refuses to re-arm a game that already has a result today.
+- **Grid accessibility identifiers use 0-based coordinates, the spoken labels 1-based.**
+  Identifiers match `today.tile.<i>`; VoiceOver says "row 1 column 2".
+- **`Views/Board/BoardView.swift` switched from `.listStyle(.plain)` to `.insetGrouped`** and
+  its title from `.inline` to `.large`, per the HIG checklist. `TileList` stays `.plain`: it
+  is a drag-to-reorder tile stack, not a settings list, and inset grouping would change the
+  Lineup screen's look.
+- **`ResultsView`'s "Done" stays a plain text button** rather than becoming an SF Symbol
+  toolbar item, because `KithLiveTests` taps it by the title as a fallback and text is the
+  standard HIG treatment for a confirming toolbar action anyway.
+- **Three hermetic UI tests and the live test gained a hub hop.** `testOnboardingToFirstPuzzle`,
+  `testSolveInOneTry`, `testAlreadyPlayedShowsCountdown` and `KithLiveTests` step 2 now tap
+  `hub.row.lineup` first, because the Lineup identifiers moved one screen down.
+
 ## Deviations from PLAN.md (and why)
 
 - **`Model/Session.swift` declares `AuthSession`, not `Session`.** `import Supabase`

@@ -17,7 +17,7 @@ struct PhoneStep: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 Text("Kith")
-                    .font(.system(size: 44, weight: .bold, design: .rounded))
+                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
                     .foregroundStyle(Color.kithAccent)
                 Text("One puzzle a day. Ranked against people you actually know.")
                     .font(.title3)

@@ -17,31 +17,31 @@ struct TodayView: View {
     var body: some View {
         @Bindable var model = model
 
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    header
+        // No `NavigationStack` of its own any more: `HubView` pushes this screen onto its
+        // stack (PLAN-games.md "Screens"). Everything below is otherwise unchanged.
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                header
 
-                    if model.resultPendingSync {
-                        banner("Offline. Your score will sync.")
-                    }
-
-                    if let engine = model.engine, engine.phase == .playing {
-                        puzzle(engine: engine)
-                    } else if model.playedToday {
-                        playedState
-                    } else {
-                        emptyState
-                    }
+                if model.resultPendingSync {
+                    banner("Offline. Your score will sync.")
                 }
-                .padding(20)
+
+                if let engine = model.engine, engine.phase == .playing {
+                    puzzle(engine: engine)
+                } else if model.playedToday {
+                    playedState
+                } else {
+                    emptyState
+                }
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden, for: .navigationBar)
-            .refreshable {
-                await model.loadToday()
-                await model.refreshBoard(kind: .friends, scopeId: nil, period: .today, force: true)
-            }
+            .padding(20)
+        }
+        .navigationTitle("Lineup")
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable {
+            await model.loadToday()
+            await model.refreshBoard(kind: .friends, scopeId: nil, period: .today, force: true)
         }
         // Registration and the contacts pre-prompt both land here with nothing loaded;
         // `bootstrap` only runs for an already-registered launch.
@@ -105,6 +105,8 @@ struct TodayView: View {
         // The List needs a height because it sits inside a ScrollView; the rows
         // themselves are never height-constrained.
         .frame(height: tileListHeight)
+        // HIG: a selection tick every time the order actually changes.
+        .sensoryFeedback(.selection, trigger: engine.currentOrder)
 
         HStack {
             triesDots(used: engine.attempts.count)
@@ -186,7 +188,7 @@ struct TodayView: View {
                         .font(.title2.weight(.semibold))
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         Text("\(summary.score)")
-                            .font(.system(size: 40, weight: .bold, design: .rounded))
+                            .font(.system(.largeTitle, design: .rounded, weight: .bold))
                             .monospacedDigit()
                         Text(summary.timeText)
                             .font(.headline)

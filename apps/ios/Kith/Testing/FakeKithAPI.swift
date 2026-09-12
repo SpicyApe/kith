@@ -15,6 +15,7 @@
 #if DEBUG
 
 import Foundation
+import GridGames
 import KithCore
 import LineupEngine
 
@@ -221,6 +222,15 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
     private var streakValue: Int
     private var createdCircleCount = 0
 
+    // Games hub state, keyed `"<date>#<game>"`.
+    private var startedGames: Set<String> = []
+    private var storedGames: [String: StoredGameSeed] = [:]
+    private var recordedGameSubmissions: [GameSubmission] = []
+    private var shouldFailNextGameSubmit = false
+    /// Mirrors the real `submit-game`'s 409 `no_start` (backend round: the caller never
+    /// called `start_game` for this date/game).
+    private var shouldFailNextGameSubmitWithNoStart = false
+
     init(state: State = .fresh) {
         self.state = state
         self.registered = state != .fresh
@@ -388,6 +398,9 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         recordedCalls.append("deleteAccount")
         registered = false
         storedResults = [:]
+        startedGames = []
+        storedGames = [:]
+        recordedGameSubmissions = []
         history = []
         circleSeeds = []
         reactionSeeds = []
@@ -406,10 +419,13 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         return Self.puzzle(for: date)
     }
 
-    func board(kind: BoardKind, scopeId: String?, period: BoardPeriod, date: String) async throws -> [BoardRow] {
+    /// The five-argument `board` is the protocol requirement (docs/07); the four-argument
+    /// spelling every pre-games call site uses comes from `KithAPI`'s extension.
+    func board(kind: BoardKind, scopeId: String?, period: BoardPeriod, date: String,
+               game: BoardGame) async throws -> [BoardRow] {
         lock.lock()
         defer { lock.unlock() }
-        recordedCalls.append("board(\(kind.rawValue),\(period.rawValue))")
+        recordedCalls.append("board(\(kind.rawValue),\(period.rawValue),\(game.rawValue))")
         switch kind {
         case .friends:
             return try Self.convert(friendRowSeeds(on: date), to: [BoardRow].self)
@@ -586,6 +602,262 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         return itemIds.compactMap { id in
             guard let item = byId[id] else { return nil }
             return RevealItem(id: item.id, label: item.label, value: item.value, fact: item.fact)
+        }
+    }
+
+    // MARK: - Games hub (docs/07, PLAN-games.md)
+
+    /// Stars 5×5. Stars sit at columns `[1, 3, 0, 2, 4]` (row by row) and the regions are
+    /// simply the five rows — the smallest connected partition in which region *r* holds its
+    /// own star, which is all the UI test needs. No two stars touch:
+    /// (0,1) (1,3) (2,0) (3,2) (4,4).
+    static let starsSolution = [1, 3, 0, 2, 4]
+
+    static func starsSpec() -> StarsSpec {
+        let n = starsSolution.count
+        let regions = (0..<n).map { row in Array(repeating: row, count: n) }
+        return StarsSpec(n: n, regions: regions)
+    }
+
+    /// Duo 6×6. A genuine Tango solution: every row and column holds three of each symbol
+    /// and no three consecutive cells match. All 30 off-diagonal cells are given, so a test
+    /// fills exactly the six cells on the leading diagonal.
+    static let duoSolution: [[Int]] = [
+        [0, 0, 1, 1, 0, 1],
+        [0, 1, 0, 0, 1, 1],
+        [1, 0, 0, 1, 1, 0],
+        [0, 1, 1, 0, 0, 1],
+        [1, 1, 0, 1, 0, 0],
+        [1, 0, 1, 0, 1, 0],
+    ]
+
+    /// The six cells left blank, in row order: the leading diagonal.
+    static var duoBlanks: [GridPoint] { (0..<6).map { GridPoint(row: $0, col: $0) } }
+
+    static func duoSpec() -> DuoSpec {
+        let blanks = Set(duoBlanks)
+        let givens: [[Int?]] = (0..<6).map { row in
+            (0..<6).map { column in
+                blanks.contains(GridPoint(row: row, col: column)) ? nil : duoSolution[row][column]
+            }
+        }
+        // Two constraints, each touching a blank cell so the badges are not decorative:
+        // (0,0) == (0,1) (both ●) and (1,0) ≠ (1,1) (● then ○).
+        return DuoSpec(n: 6, givens: givens, eq: [[0, 0, 0, 1]], ne: [[1, 0, 1, 1]])
+    }
+
+    /// Trail 3×3 with waypoints 1→3 on the diagonal, solved by the snake
+    /// (0,0) (0,1) (0,2) (1,2) (1,1) (1,0) (2,0) (2,1) (2,2).
+    static let trailPath: [[Int]] = [[0, 0], [0, 1], [0, 2], [1, 2], [1, 1], [1, 0], [2, 0], [2, 1], [2, 2]]
+
+    static func trailSpec() -> TrailSpec {
+        TrailSpec(n: 3, waypoints: [[0, 0], [1, 1], [2, 2]])
+    }
+
+    static func spec(for game: GameKind) -> GameSpec {
+        switch game {
+        case .stars: return .stars(starsSpec())
+        case .duo: return .duo(duoSpec())
+        case .trail: return .trail(trailSpec())
+        }
+    }
+
+    /// Puzzle numbers, so `GameShareText` renders something stable.
+    static func number(for game: GameKind) -> Int {
+        switch game {
+        case .stars: return 12
+        case .duo: return 13
+        case .trail: return 14
+        }
+    }
+
+    private struct DailyGameSeed: Encodable {
+        var date: String
+        var game: GameKind
+        var number: Int
+        var difficulty: String
+    }
+
+    private struct GameResultSeed: Encodable {
+        var date: String
+        var game: GameKind
+        var elapsed_ms: Int
+        var solved: Bool
+        var gave_up: Bool
+        var score: Int
+    }
+
+    private struct StoredGameSeed: Encodable {
+        var date: String
+        var game: GameKind
+        var elapsedMs: Int
+        var elapsedSource: String
+        var mistakes: Int
+        var solved: Bool
+        var gaveUp: Bool
+        var score: Int
+        var submittedAt: String
+    }
+
+    private struct SubmitGameSeed: Encodable {
+        var result: StoredGameSeed
+        var streak: Int
+    }
+
+    /// Every `submitGame` the fake has seen, in order, for unit-test assertions.
+    struct GameSubmission: Sendable, Equatable {
+        let date: String
+        let game: GameKind
+        let elapsedMs: Int
+        let mistakes: Int
+        let gaveUp: Bool
+        /// The JSON the real client would have put in the `answer` field, or nil on a give-up.
+        let answerJSON: String?
+    }
+
+    var gameSubmissions: [GameSubmission] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedGameSubmissions
+    }
+
+    /// Makes the next `submitGame` throw `KithError.network("offline")`, once.
+    var failNextGameSubmit: Bool {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return shouldFailNextGameSubmit
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            shouldFailNextGameSubmit = newValue
+        }
+    }
+
+    /// Makes the next `submitGame` throw the same `KithError.api(status: 409, code:
+    /// "no_start", …)` the real backend does when `start_game` was never called for that
+    /// date/game — the grid-game twin of `already_played` detection above, and what
+    /// `AppModel.submitGame`'s no-start retry is exercised against.
+    var failNextGameSubmitWithNoStart: Bool {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return shouldFailNextGameSubmitWithNoStart
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            shouldFailNextGameSubmitWithNoStart = newValue
+        }
+    }
+
+    func startGame(date: String, game: GameKind) async throws -> StartedGame {
+        lock.lock()
+        defer { lock.unlock() }
+        recordedCalls.append("startGame(\(game.rawValue))")
+        startedGames.insert(Self.gameKey(date: date, game: game))
+        return StartedGame(
+            date: date,
+            game: game,
+            number: Self.number(for: game),
+            difficulty: "easy",
+            spec: Self.spec(for: game)
+        )
+    }
+
+    func submitGame(date: String, game: GameKind, tz: String, elapsedMs: Int, mistakes: Int,
+                    gaveUp: Bool, answer: GameAnswer?) async throws -> SubmitGameResponse {
+        lock.lock()
+        defer { lock.unlock() }
+        recordedCalls.append("submitGame(\(game.rawValue),gaveUp:\(gaveUp))")
+
+        if shouldFailNextGameSubmitWithNoStart {
+            shouldFailNextGameSubmitWithNoStart = false
+            throw KithError.api(status: 409, code: "no_start",
+                                message: "Start the game before submitting a result.")
+        }
+
+        if shouldFailNextGameSubmit {
+            shouldFailNextGameSubmit = false
+            throw KithError.network("offline")
+        }
+
+        let key = Self.gameKey(date: date, game: game)
+        recordedGameSubmissions.append(GameSubmission(
+            date: date, game: game, elapsedMs: elapsedMs, mistakes: mistakes,
+            gaveUp: gaveUp, answerJSON: Self.json(answer)
+        ))
+
+        if storedGames[key] != nil {
+            throw KithError.api(status: 409, code: "already_played",
+                                message: "You've already played that one today.")
+        }
+
+        let seed = StoredGameSeed(
+            date: date,
+            game: game,
+            elapsedMs: elapsedMs,
+            elapsedSource: startedGames.contains(key) ? "server" : "client",
+            mistakes: mistakes,
+            solved: !gaveUp,
+            gaveUp: gaveUp,
+            score: GameScoring.score(elapsedMs: elapsedMs, gaveUp: gaveUp),
+            submittedAt: Self.timestamp()
+        )
+        storedGames[key] = seed
+        streakValue += 1
+        return try Self.convert(SubmitGameSeed(result: seed, streak: streakValue),
+                                to: SubmitGameResponse.self)
+    }
+
+    func myGameResults(sinceDate: String) async throws -> [GameResultSummary] {
+        lock.lock()
+        defer { lock.unlock() }
+        recordedCalls.append("myGameResults")
+        let seeds = storedGames.values
+            .filter { $0.date >= sinceDate }
+            .map { stored in
+                GameResultSeed(date: stored.date, game: stored.game, elapsed_ms: stored.elapsedMs,
+                               solved: stored.solved, gave_up: stored.gaveUp, score: stored.score)
+            }
+            .sorted { ($0.date, $0.game.rawValue) < ($1.date, $1.game.rawValue) }
+        return try Self.convert(seeds, to: [GameResultSummary].self)
+    }
+
+    func dailyGames(date: String) async throws -> [DailyGameRow] {
+        lock.lock()
+        defer { lock.unlock() }
+        recordedCalls.append("dailyGames")
+        let seeds = GameKind.allCases.map { game in
+            DailyGameSeed(date: date, game: game, number: Self.number(for: game), difficulty: "easy")
+        }
+        return try Self.convert(seeds, to: [DailyGameRow].self)
+    }
+
+    private static func gameKey(date: String, game: GameKind) -> String {
+        "\(date)#\(game.rawValue)"
+    }
+
+    /// The wire JSON for an answer (`{"stars":[…]}`, `{"cells":[[…]]}`, `{"path":[[r,c],…]}`).
+    ///
+    /// Deliberately NOT `JSONEncoder().encode(answer)`, even though `GameAnswer.encode(to:)`
+    /// is now fully implemented in KithCore: this renders the same three shapes independently
+    /// so a unit test asserting on `answerJSON` (`GamesTests`) is checking the fake's output
+    /// against a hand-written expectation, not against `GameAnswer.encode` marking its own
+    /// homework.
+    private static func json(_ answer: GameAnswer?) -> String? {
+        guard let answer else { return nil }
+        func flat(_ values: [Int]) -> String {
+            "[" + values.map(String.init).joined(separator: ",") + "]"
+        }
+        func nested(_ values: [[Int]]) -> String {
+            "[" + values.map(flat).joined(separator: ",") + "]"
+        }
+        switch answer {
+        case .stars(let columns): return "{\"stars\":\(flat(columns))}"
+        case .duo(let cells): return "{\"cells\":\(nested(cells))}"
+        case .trail(let path): return "{\"path\":\(nested(path))}"
         }
     }
 

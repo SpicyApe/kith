@@ -42,6 +42,7 @@ struct CirclesView: View {
                         .accessibilityIdentifier("circles.join")
                 }
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("Circles")
             .task { await model.loadCircles() }
             .refreshable { await model.loadCircles() }
@@ -90,12 +91,16 @@ struct CirclesView: View {
                     model.show(toast: "Code copied.", isError: false)
                 } label: {
                     Image(systemName: "doc.on.doc")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Copy the code for \(circle.name)")
 
                 ShareLink(item: model.circleLink(circle)) {
                     Image(systemName: "square.and.arrow.up")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Share a link to \(circle.name)")
 

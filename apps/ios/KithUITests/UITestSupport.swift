@@ -72,6 +72,31 @@ import XCTest
         return app.buttons[identifier]
     }
 
+    // MARK: - Games hub
+
+    /// The Today tab is the games hub (docs/07); Lineup and the three grid games are
+    /// screens it pushes. Waits for the row to exist AND to become enabled — a grid-game
+    /// row is disabled until `dailyGames` has landed — and then taps it.
+    func openHubRow(_ slug: String,
+                    file: StaticString = #filePath,
+                    line: UInt = #line) {
+        let row = element("hub.row.\(slug)")
+        awaitElement(row, "hub.row.\(slug) never appeared on the games hub",
+                     timeout: Self.launchTimeout, file: file, line: line)
+        awaitEnabled(row, "hub.row.\(slug) never became enabled", file: file, line: line)
+        row.tap()
+    }
+
+    /// Taps a grid cell (`stars.cell.<r>.<c>` and friends) `times` times.
+    func tapCell(_ identifier: String,
+                 times: Int = 1,
+                 file: StaticString = #filePath,
+                 line: UInt = #line) {
+        let cell = awaitElement(element(identifier), "\(identifier) never appeared",
+                                file: file, line: line)
+        for _ in 0..<times { cell.tap() }
+    }
+
     // MARK: - Assertions and interactions
 
     /// Waits for `element` to exist, failing the test (and stopping it, because

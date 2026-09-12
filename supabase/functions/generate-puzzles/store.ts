@@ -2,6 +2,7 @@
 // only depends on the `GenerateStore` interface from handler.ts.
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.116.0";
+import type { GameKind, GeneratedGame } from "../_shared/games/common.ts";
 import {
   addDaysUTC,
   ITEM_COOLDOWN_DAYS,
@@ -136,6 +137,88 @@ export class SupabaseGenerateStore implements GenerateStore {
       .from("puzzles")
       .select("seed")
       .eq("date", date)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
+    return data.seed as number;
+  }
+
+  // -------------------------------------------------------------------------
+  // Grid games (daily_games). Rows are approved on insert: the uniqueness solver
+  // proves correctness, so there is no review step.
+  // -------------------------------------------------------------------------
+
+  async existingGames(from: string, to: string): Promise<string[]> {
+    const { data, error } = await this.client
+      .from("daily_games")
+      .select("date, game")
+      .gte("date", from)
+      .lte("date", to);
+    if (error) throw error;
+    return (data ?? []).map((row) => `${row.date as string}#${row.game as string}`);
+  }
+
+  async nextGameNumber(game: GameKind): Promise<number> {
+    const { data, error } = await this.client
+      .from("daily_games")
+      .select("number")
+      .eq("game", game)
+      .order("number", { ascending: false })
+      .limit(1);
+    if (error) throw error;
+    const max = data && data.length > 0 ? (data[0].number as number) : 0;
+    return max + 1;
+  }
+
+  async insertGame(date: string, g: GeneratedGame, number: number): Promise<void> {
+    const { error } = await this.client.from("daily_games").insert({
+      date,
+      game: g.game,
+      number,
+      spec: g.spec,
+      solution: g.solution,
+      status: "approved",
+      difficulty: g.difficulty,
+      seed: g.seed,
+    });
+    if (error) throw error;
+  }
+
+  async replaceGame(date: string, g: GeneratedGame): Promise<void> {
+    const { data: existingResults, error: resultsError } = await this.client
+      .from("game_results")
+      .select("1")
+      .eq("date", date)
+      .eq("game", g.game)
+      .limit(1);
+    if (resultsError) throw resultsError;
+    if (existingResults && existingResults.length > 0) {
+      throw Object.assign(new Error("has results"), { code: "has_results" });
+    }
+
+    const { data, error } = await this.client
+      .from("daily_games")
+      .update({
+        spec: g.spec,
+        solution: g.solution,
+        difficulty: g.difficulty,
+        seed: g.seed,
+      })
+      .eq("date", date)
+      .eq("game", g.game)
+      .select("date");
+    if (error) throw error;
+    if (!data || data.length === 0) {
+      throw Object.assign(new Error("not found"), { code: "not_found" });
+    }
+  }
+
+  async gameSeedOf(date: string, game: GameKind): Promise<number | null> {
+    const { data, error } = await this.client
+      .from("daily_games")
+      .select("seed")
+      .eq("date", date)
+      .eq("game", game)
       .maybeSingle();
     if (error) throw error;
     if (!data) return null;

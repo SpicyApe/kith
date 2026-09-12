@@ -1,5 +1,6 @@
 import XCTest
 @testable import KithCore
+import GridGames
 import LineupEngine
 
 final class SupabaseKithAPITests: XCTestCase {
@@ -110,6 +111,19 @@ final class SupabaseKithAPITests: XCTestCase {
         XCTAssertTrue(body["scope_id"] is NSNull, "scope_id should be null, got \(String(describing: body["scope_id"]))")
         XCTAssertEqual(body["period"] as? String, "today")
         XCTAssertEqual(body["for_date"] as? String, "2026-09-11")
+        XCTAssertEqual(body["game_kind"] as? String, "lineup")
+    }
+
+    func testBoardWithExplicitGameSendsThatGameKind() async throws {
+        let http = FakeHTTPClient()
+        let api = makeAPI(http: http, auth: FakeAuth(token: "token-abc"))
+        http.queue(status: 200, body: Data("[]".utf8))
+
+        _ = try await api.board(kind: .friends, scopeId: nil, period: .week, date: "2026-09-11", game: .total)
+
+        let req = try XCTUnwrap(http.requests.first)
+        let body = try jsonObject(req.body)
+        XCTAssertEqual(body["game_kind"] as? String, "total")
     }
 
     // MARK: joinCircle (RPC returning a bare scalar)
@@ -650,5 +664,129 @@ final class SupabaseKithAPITests: XCTestCase {
         XCTAssertNil(SupabaseKithAPI.userId(fromJWT: "not-a-jwt"))
         XCTAssertNil(SupabaseKithAPI.userId(fromJWT: "only.two-parts"))
         XCTAssertNil(SupabaseKithAPI.userId(fromJWT: "not base64!.not base64!.sig"))
+    }
+
+    // MARK: startGame (RPC)
+
+    func testStartGameSendsRPCBodyAndDecodesTheStartedGame() async throws {
+        let http = FakeHTTPClient()
+        let api = makeAPI(http: http, auth: FakeAuth(token: "token-abc"))
+        http.queue(status: 200, body: Data("""
+        {"date":"2026-09-11","game":"stars","number":12,"difficulty":"medium",
+         "spec":{"n":2,"regions":[[0,1],[1,0]]}}
+        """.utf8))
+
+        let started = try await api.startGame(date: "2026-09-11", game: .stars)
+
+        XCTAssertEqual(started.date, "2026-09-11")
+        XCTAssertEqual(started.game, .stars)
+        XCTAssertEqual(started.number, 12)
+        XCTAssertEqual(started.spec, .stars(StarsSpec(n: 2, regions: [[0, 1], [1, 0]])))
+
+        let req = try XCTUnwrap(http.requests.first)
+        XCTAssertEqual(req.method, .post)
+        XCTAssertEqual(req.url, baseURL.appendingPathComponent("rest/v1/rpc/start_game"))
+        let body = try jsonObject(req.body)
+        XCTAssertEqual(body["d"] as? String, "2026-09-11")
+        XCTAssertEqual(body["g"] as? String, "stars")
+    }
+
+    // MARK: submitGame (edge function)
+
+    func testSubmitGamePostsTheAnswerAndDecodesTheResponse() async throws {
+        let http = FakeHTTPClient()
+        let api = makeAPI(http: http, auth: FakeAuth(token: "token-abc"))
+        http.queue(status: 200, body: Data("""
+        {"result":{"date":"2026-09-11","game":"stars","elapsedMs":48000,"elapsedSource":"client",
+                   "mistakes":1,"solved":true,"gaveUp":false,"score":904,"submittedAt":"2026-09-11T12:00:00Z"},
+         "streak":5}
+        """.utf8))
+
+        let response = try await api.submitGame(
+            date: "2026-09-11", game: .stars, tz: "Europe/London",
+            elapsedMs: 48_000, mistakes: 1, gaveUp: false, answer: .stars([0, 1])
+        )
+
+        XCTAssertEqual(response.streak, 5)
+        XCTAssertEqual(response.result.score, 904)
+
+        let req = try XCTUnwrap(http.requests.first)
+        XCTAssertEqual(req.method, .post)
+        XCTAssertEqual(req.url, baseURL.appendingPathComponent("functions/v1/submit-game"))
+        let body = try jsonObject(req.body)
+        XCTAssertEqual(body["date"] as? String, "2026-09-11")
+        XCTAssertEqual(body["game"] as? String, "stars")
+        XCTAssertEqual(body["tz"] as? String, "Europe/London")
+        XCTAssertEqual(body["elapsedMs"] as? Int, 48_000)
+        XCTAssertEqual(body["mistakes"] as? Int, 1)
+        XCTAssertEqual(body["gaveUp"] as? Bool, false)
+        let answer = try XCTUnwrap(body["answer"] as? [String: Any])
+        XCTAssertEqual(answer["stars"] as? [Int], [0, 1])
+    }
+
+    func testSubmitGameOmitsAnswerKeyWhenNil() async throws {
+        let http = FakeHTTPClient()
+        let api = makeAPI(http: http, auth: FakeAuth(token: "token-abc"))
+        http.queue(status: 200, body: Data("""
+        {"result":{"date":"2026-09-11","game":"trail","elapsedMs":10000,"elapsedSource":"client",
+                   "mistakes":0,"solved":false,"gaveUp":true,"score":100,"submittedAt":"2026-09-11T12:00:00Z"},
+         "streak":0}
+        """.utf8))
+
+        _ = try await api.submitGame(
+            date: "2026-09-11", game: .trail, tz: "UTC",
+            elapsedMs: 10_000, mistakes: 0, gaveUp: true, answer: nil
+        )
+
+        let req = try XCTUnwrap(http.requests.first)
+        let body = try jsonObject(req.body)
+        XCTAssertFalse(body.keys.contains("answer"), "answer key should be omitted when nil, got \(body)")
+    }
+
+    // MARK: myGameResults (PostgREST GET)
+
+    func testMyGameResultsSendsFilteredGETAndDecodesSnakeCaseFields() async throws {
+        let http = FakeHTTPClient()
+        let api = makeAPI(http: http, auth: FakeAuth(token: makeJWT(sub: "user-42")))
+        http.queue(status: 200, body: Data("""
+        [{"date":"2026-09-11","game":"duo","elapsed_ms":30000,"solved":true,"gave_up":false,"score":940}]
+        """.utf8))
+
+        let results = try await api.myGameResults(sinceDate: "2026-09-01")
+
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results[0].elapsed_ms, 30_000)
+        XCTAssertEqual(results[0].gave_up, false)
+        XCTAssertEqual(results[0].solved, true)
+
+        let req = try XCTUnwrap(http.requests.first)
+        XCTAssertEqual(req.method, .get)
+        let urlString = req.url.absoluteString
+        XCTAssertTrue(urlString.hasPrefix("https://example.supabase.co/rest/v1/game_results?"))
+        XCTAssertTrue(urlString.contains("select=date,game,elapsed_ms,solved,gave_up,score"))
+        XCTAssertTrue(urlString.contains("user_id=eq.user-42"))
+        XCTAssertTrue(urlString.contains("date=gte.2026-09-01"))
+        XCTAssertTrue(urlString.contains("order=date.asc"))
+    }
+
+    // MARK: dailyGames (PostgREST GET)
+
+    func testDailyGamesSendsFilteredGETAndDecodesRows() async throws {
+        let http = FakeHTTPClient()
+        let api = makeAPI(http: http, auth: FakeAuth(token: "token-abc"))
+        http.queue(status: 200, body: Data("""
+        [{"date":"2026-09-11","game":"duo","number":4,"difficulty":"easy"}]
+        """.utf8))
+
+        let rows = try await api.dailyGames(date: "2026-09-11")
+
+        XCTAssertEqual(rows, [DailyGameRow(date: "2026-09-11", game: .duo, number: 4, difficulty: "easy")])
+
+        let req = try XCTUnwrap(http.requests.first)
+        XCTAssertEqual(req.method, .get)
+        XCTAssertEqual(
+            req.url.absoluteString,
+            "https://example.supabase.co/rest/v1/daily_games?select=date,game,number,difficulty&date=eq.2026-09-11&order=game.asc"
+        )
     }
 }

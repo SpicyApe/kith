@@ -1,5 +1,6 @@
 // ProfileView.swift — docs/03 §5.
 
+import GridGames
 import KithCore
 import Foundation
 import SwiftUI
@@ -26,6 +27,8 @@ struct ProfileView: View {
                     StatsGrid(stats: model.stats)
                         .padding(.vertical, 4)
                 }
+
+                gamesSection
 
                 if let profile = model.profile {
                     Section("Your code") {
@@ -62,7 +65,9 @@ struct ProfileView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("You")
+            .navigationBarTitleDisplayMode(.large)
             .task { await model.loadProfileData() }
             .refreshable { await model.loadProfileData() }
             .confirmationDialog(
@@ -114,6 +119,37 @@ struct ProfileView: View {
         // No puzzle number here: the profile invite is an evergreen "join me" link, not
         // a pointer at today's puzzle.
         InvitePresenter.text(webBase: AppConfig.webBase.absoluteString, code: code, puzzleNumber: nil)
+    }
+
+    /// docs/07: days played and best time per grid game.
+    private var gamesSection: some View {
+        Section("Games") {
+            ForEach(model.gameStats) { stat in
+                HStack(spacing: 12) {
+                    Image(systemName: stat.game.symbolName)
+                        .font(.body)
+                        .foregroundStyle(Color.kithAccent)
+                        .frame(width: 28)
+                    Text(stat.game.title)
+                        .font(.body)
+                    Spacer()
+                    Text(Self.gameStatText(stat))
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .frame(minHeight: 44)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(stat.game.title): \(Self.gameStatText(stat))")
+                .accessibilityIdentifier("profile.game.\(stat.game.rawValue)")
+            }
+        }
+    }
+
+    private static func gameStatText(_ stat: GameStat) -> String {
+        guard stat.daysPlayed > 0 else { return "Not played yet" }
+        let days = stat.daysPlayed == 1 ? "1 day" : "\(stat.daysPlayed) days"
+        guard let best = stat.bestMs else { return days }
+        return "\(days) · best \(AppModel.clock(best))"
     }
 
     // MARK: Settings sections

@@ -3,6 +3,7 @@
 
 import { assert, assertEquals, assertNotEquals, assertRejects } from "jsr:@std/assert";
 import { FakeGenerateStore } from "../_shared/test_fakes.ts";
+import { GAME_KINDS, gameSeedFor } from "../_shared/games/common.ts";
 import {
   difficultyFor,
   gapsOk,
@@ -497,7 +498,7 @@ Deno.test("handleGenerate - daysAhead 0 yields an empty report and makes no writ
 
   const report = await handleGenerate({ daysAhead: 0 }, new Date("2026-09-14T00:00:00Z"), store);
 
-  assertEquals(report, { created: [], replaced: [], skipped: [] });
+  assertEquals(report, { created: [], replaced: [], skipped: [], games: { created: [], replaced: [], skipped: [] } });
   assertEquals(store.inserted.length, 0);
 });
 
@@ -509,7 +510,7 @@ Deno.test("handleGenerate - a negative daysAhead is treated as 0 iterations: emp
 
   const report = await handleGenerate({ daysAhead: -1 }, new Date("2026-09-14T00:00:00Z"), store);
 
-  assertEquals(report, { created: [], replaced: [], skipped: [] });
+  assertEquals(report, { created: [], replaced: [], skipped: [], games: { created: [], replaced: [], skipped: [] } });
   assertEquals(store.inserted.length, 0);
 });
 
@@ -537,4 +538,227 @@ Deno.test("handleGenerate - replace() throwing propagates", async () => {
     Error,
     "cannot replace an approved puzzle",
   );
+});
+
+// ---------------------------------------------------------------------------
+// handleGenerate - grid games (daily_games; docs/07-games-hub.md)
+//
+// generateDailyGame calls the REAL generators (games/stars.ts etc.), so
+// daysAhead is kept small (2) to keep these tests fast.
+// ---------------------------------------------------------------------------
+
+Deno.test("handleGenerate - grid games: fill-ahead creates all three games for every date in range", async () => {
+  const store = new FakeGenerateStore();
+  // No lists/items at all: Lineup generation finds nothing, but grid games
+  // don't depend on lists/items and must still fill.
+  const now = new Date("2026-09-14T00:00:00Z");
+
+  const report = await handleGenerate({ daysAhead: 2 }, now, store);
+
+  const expectedKeys = new Set<string>();
+  for (const date of ["2026-09-14", "2026-09-15"]) {
+    for (const game of GAME_KINDS) expectedKeys.add(`${date}#${game}`);
+  }
+  assertEquals(new Set(report.games.created), expectedKeys);
+  assertEquals(report.games.skipped, []);
+  assertEquals(store.insertedGames.length, expectedKeys.size);
+});
+
+Deno.test("handleGenerate - grid games: numbers increase per game from nextGameNumber, independently per game", async () => {
+  const store = new FakeGenerateStore();
+  store.nextGameNumberValues.set("stars", 50);
+  store.nextGameNumberValues.set("duo", 900);
+  store.nextGameNumberValues.set("trail", 1);
+  const now = new Date("2026-09-14T00:00:00Z");
+
+  await handleGenerate({ daysAhead: 2 }, now, store);
+
+  const starsNumbers = store.insertedGames.filter((r) => r.g.game === "stars").map((r) => r.number);
+  const duoNumbers = store.insertedGames.filter((r) => r.g.game === "duo").map((r) => r.number);
+  const trailNumbers = store.insertedGames.filter((r) => r.g.game === "trail").map((r) => r.number);
+  assertEquals(starsNumbers, [50, 51]);
+  assertEquals(duoNumbers, [900, 901]);
+  assertEquals(trailNumbers, [1, 2]);
+});
+
+Deno.test("handleGenerate - grid games: an existing (date, game) key is skipped, others still fill", async () => {
+  const store = new FakeGenerateStore();
+  const now = new Date("2026-09-14T00:00:00Z");
+  // Pre-seed just stars for the first date; everything else should still fill.
+  store.gamesData.set("2026-09-14#stars", {
+    g: { game: "stars", spec: {}, solution: {}, difficulty: "easy", seed: 1 },
+    number: 1,
+  });
+
+  const report = await handleGenerate({ daysAhead: 2 }, now, store);
+
+  assert(!report.games.created.includes("2026-09-14#stars"));
+  assert(report.games.created.includes("2026-09-14#duo"));
+  assert(report.games.created.includes("2026-09-14#trail"));
+  assert(report.games.created.includes("2026-09-15#stars"));
+  // insertGame must never be called again for the pre-existing key.
+  assert(!store.insertedGames.some((r) => r.date === "2026-09-14" && r.g.game === "stars"));
+});
+
+Deno.test("handleGenerate - grid games: reseeding a specific (date, game) calls replaceGame, not insertGame", async () => {
+  const store = new FakeGenerateStore();
+  const date = "2026-09-14";
+  store.gamesData.set(`${date}#stars`, {
+    g: { game: "stars", spec: {}, solution: {}, difficulty: "easy", seed: 1 },
+    number: 7,
+  });
+  const now = new Date("2026-09-14T00:00:00Z");
+
+  const report = await handleGenerate({ date, game: "stars" }, now, store);
+
+  assertEquals(report.games.replaced, [`${date}#stars`]);
+  assertEquals(report.games.created, []);
+  assertEquals(report.games.skipped, []);
+  assertEquals(store.replacedGames.length, 1);
+  assertEquals(store.replacedGames[0].date, date);
+  assertEquals(store.replacedGames[0].g.game, "stars");
+  // Lineup and other games must be untouched.
+  assertEquals(store.inserted.length, 0);
+  assertEquals(store.replaced.length, 0);
+  assertEquals(store.insertedGames.length, 0);
+});
+
+Deno.test("handleGenerate - grid games: reseed does not call lists()/items() (Lineup is untouched)", async () => {
+  const store = new FakeGenerateStore();
+  let listsCalled = false;
+  const originalLists = store.lists.bind(store);
+  store.lists = () => {
+    listsCalled = true;
+    return originalLists();
+  };
+  store.gamesData.set("2026-09-14#duo", {
+    g: { game: "duo", spec: {}, solution: {}, difficulty: "easy", seed: 1 },
+    number: 3,
+  });
+
+  await handleGenerate({ date: "2026-09-14", game: "duo" }, new Date("2026-09-14T00:00:00Z"), store);
+
+  assertEquals(listsCalled, false);
+});
+
+Deno.test("handleGenerate - grid games: replaceGame throwing propagates", async () => {
+  const store = new FakeGenerateStore();
+  store.replaceGameError = new Error("not_found");
+
+  await assertRejects(
+    () => handleGenerate({ date: "2026-09-14", game: "stars" }, new Date("2026-09-14T00:00:00Z"), store),
+    Error,
+    "not_found",
+  );
+});
+
+Deno.test("handleGenerate - report.games always has created/replaced/skipped arrays", async () => {
+  const store = new FakeGenerateStore();
+  const report = await handleGenerate({ daysAhead: 0 }, new Date("2026-09-14T00:00:00Z"), store);
+  assert(Array.isArray(report.games.created));
+  assert(Array.isArray(report.games.replaced));
+  assert(Array.isArray(report.games.skipped));
+});
+
+Deno.test("handleGenerate - report.games is present and empty for a pure Lineup reseed (date without game)", async () => {
+  const store = new FakeGenerateStore();
+  const { list, items } = plainList(1, 100_000);
+  store.listsData = [list];
+  store.itemsData = items;
+
+  const report = await handleGenerate({ date: "2026-09-14" }, new Date("2026-09-14T00:00:00Z"), store);
+
+  assertEquals(report.games, { created: [], replaced: [], skipped: [] });
+});
+
+// ---------------------------------------------------------------------------
+// grid games: reseed skips the current seed (B3)
+// ---------------------------------------------------------------------------
+
+Deno.test("handleGenerate - grid games: reseed never reproduces the current seed (bumps to the next attempt)", async () => {
+  const store = new FakeGenerateStore();
+  const date = "2026-09-14";
+  const game = "stars";
+
+  // Find the attempt whose seed generateDailyGame would use first (attempt 1)
+  // and plant it as the "current" seed via gameSeedOf, so a naive attempt=1
+  // reseed would be a no-op.
+  const currentSeed = gameSeedFor(date, game, 1);
+  store.gameSeeds.set(`${date}#${game}`, currentSeed);
+  store.gamesData.set(`${date}#${game}`, {
+    g: { game, spec: {}, solution: {}, difficulty: "easy", seed: currentSeed },
+    number: 7,
+  });
+
+  const report = await handleGenerate({ date, game }, new Date("2026-09-14T00:00:00Z"), store);
+
+  assertEquals(report.games.replaced, [`${date}#${game}`]);
+  assertEquals(store.replacedGames.length, 1);
+  assertNotEquals(store.replacedGames[0].g.seed, currentSeed);
+});
+
+// ---------------------------------------------------------------------------
+// grid games: has_results guard (A3)
+// ---------------------------------------------------------------------------
+
+Deno.test("handleGenerate - grid games: reseed propagates has_results when the game has already been played", async () => {
+  const store = new FakeGenerateStore();
+  const date = "2026-09-14";
+  const game = "stars";
+  store.gamesData.set(`${date}#${game}`, {
+    g: { game, spec: {}, solution: {}, difficulty: "easy", seed: 1 },
+    number: 7,
+  });
+  store.seedGameResult(date, game);
+
+  const err = await assertRejects(
+    () => handleGenerate({ date, game }, new Date("2026-09-14T00:00:00Z"), store),
+  );
+  assertEquals((err as Error & { code?: string }).code, "has_results");
+});
+
+// ---------------------------------------------------------------------------
+// grid games: fill-ahead resilience (Bucket B9 / missing tests)
+// ---------------------------------------------------------------------------
+
+Deno.test("handleGenerate - grid games: a game that fails to persist lands in games.skipped, others still created", async () => {
+  // generateDailyGame calls the real, deterministic generators, which don't
+  // fail for any real (date, game, attempt <= 4) combination, so there's no
+  // way to force an actual null-generation from outside this module. This
+  // exercises the same per-key try/catch -> games.skipped path (handler.ts's
+  // "one bad key can't abort the run" contract) via the other failure mode
+  // the doc comment describes: the store rejecting for one game.
+  const store = new FakeGenerateStore();
+  const now = new Date("2026-09-14T00:00:00Z");
+  const originalInsertGame = store.insertGame.bind(store);
+  store.insertGame = (date, g, number) => {
+    if (g.game === "duo") return Promise.reject(new Error("duo generation impossible"));
+    return originalInsertGame(date, g, number);
+  };
+
+  const report = await handleGenerate({ daysAhead: 1 }, now, store);
+  assertEquals(report.games.skipped.includes("2026-09-14#duo"), true);
+  assertEquals(report.games.created.includes("2026-09-14#stars"), true);
+  assertEquals(report.games.created.includes("2026-09-14#trail"), true);
+});
+
+Deno.test("handleGenerate - grid games: insertGame throwing for the second game leaves the first in games.created", async () => {
+  const store = new FakeGenerateStore();
+  const now = new Date("2026-09-14T00:00:00Z");
+  const originalInsertGame = store.insertGame.bind(store);
+  let calls = 0;
+  store.insertGame = (date, g, number) => {
+    calls++;
+    if (calls === 2) return Promise.reject(new Error("db down"));
+    return originalInsertGame(date, g, number);
+  };
+
+  const report = await handleGenerate({ daysAhead: 1 }, now, store);
+
+  // GAME_KINDS order is stars, duo, trail: the first call (stars) succeeds and
+  // is committed; the second call's failure is caught per-key and skipped,
+  // not allowed to abort the run or roll back the first.
+  assertEquals(report.games.created.includes("2026-09-14#stars"), true);
+  assertEquals(report.games.skipped.includes("2026-09-14#duo"), true);
+  assertEquals(report.games.created.includes("2026-09-14#trail"), true);
 });

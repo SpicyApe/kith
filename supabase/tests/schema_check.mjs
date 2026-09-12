@@ -25,7 +25,8 @@ await db.exec(`
 `);
 await db.exec(sql);
 await db.exec(fs.readFileSync(new URL("../migrations/0004_revoke_wrappers_from_anon.sql", import.meta.url), "utf8"));
-console.log("migration: OK (0001 + 0004)");
+await db.exec(fs.readFileSync(new URL("../migrations/0006_games.sql", import.meta.url), "utf8"));
+console.log("migration: OK (0001 + 0004 + 0006)");
 
 const A = "11111111-1111-1111-1111-111111111111";
 const B = "22222222-2222-2222-2222-222222222222";
@@ -100,7 +101,8 @@ await db.exec(`
     public.can_see(uuid),
     public.my_streak(),
     public.is_circle_member(uuid),
-    public.board(text, uuid, text, date),
+    public.board(text, uuid, text, date, text),
+    public.start_game(date, text),
     public.join_circle(text),
     public.track(text, jsonb),
     public.hide_taunt(uuid, date)
@@ -632,6 +634,420 @@ if (sentTodayBoundary.rows.length !== 1 || sentTodayBoundary.rows[0].kind !== "d
 console.log("push_candidates: a notification_log row from yesterday 23:30Z does not count toward today's cap - OK");
 
 // ---------------------------------------------------------------------------
+// Games hub: daily_games / game_starts / game_results, start_game(), and
+// board()/streak() with the game picker (migrations/0006_games.sql,
+// docs/07-games-hub.md). Placed here (before delete_account, below) so it
+// can still use the original A/B/C/D fixtures — including A's and B's
+// lineup scores from the very top of this file (920 and 100 today) — before
+// delete_account removes A. B's display_name was renamed to "Sam2" earlier
+// in the RLS section; games-hub checks below match by user_id, not name.
+// ---------------------------------------------------------------------------
+
+await db.exec(`
+  insert into public.daily_games (date, game, number, spec, solution, difficulty) values
+    ('${today}', 'stars', 1, '{"n":5}'::jsonb, '{"stars":[0,1,2,3,4]}'::jsonb, 'easy'),
+    ('${today}', 'duo',   1, '{"n":6}'::jsonb, '{"cells":[]}'::jsonb, 'easy'),
+    ('${today}', 'trail', 1, '{"n":5}'::jsonb, '{"path":[]}'::jsonb, 'easy'),
+    ('${yest}',  'stars', 2, '{"n":5}'::jsonb, '{"stars":[0,1,2,3,4]}'::jsonb, 'easy');
+`);
+console.log("games hub: seeded daily_games for today (stars/duo/trail) and yesterday (stars) - OK");
+
+// The blanket "grant select ... on all tables in schema public to app" made
+// earlier in the RLS section opens every column of every table (including
+// daily_games.solution) directly to `app`, independent of the column-level
+// grant the migration made to `authenticated`. Narrow it back down for
+// daily_games the same way that block already does for users, so this test
+// role actually exercises the migration's column grant instead of bypassing
+// it via app's own blanket access.
+await db.exec(`
+  revoke select on public.daily_games from app;
+  grant select (date, game, number, status, difficulty, spec, created_at) on public.daily_games to app;
+`);
+
+// start_game: as B (app role), returns the spec (never the solution) and
+// records a game_starts row.
+await db.exec(`set role app; set app.uid = '${B}';`);
+const startGameRes = await db.query(`select public.start_game('${today}', 'stars') as p`);
+const startGameJson = startGameRes.rows[0].p;
+if (!Object.hasOwn(startGameJson, "spec")) {
+  throw new Error(`start_game: expected a spec key, got ${JSON.stringify(startGameJson)}`);
+}
+if (Object.hasOwn(startGameJson, "solution")) throw new Error("start_game: must never expose the solution");
+console.log("start_game: returns spec, no solution key - OK");
+
+let badGameThrew = false;
+try {
+  await db.query(`select public.start_game('${today}', 'bogus') as p`);
+} catch (e) {
+  badGameThrew = true;
+  console.log("start_game('bogus') correctly threw:", e.message.split("\n")[0]);
+}
+if (!badGameThrew) throw new Error("start_game: expected a throw for an unknown game");
+
+// Outside the +/-14h window it must throw with errcode P0006, even for a registered caller.
+let startGameOutsideWindowThrew = false;
+try {
+  await db.query(`select public.start_game('2000-01-01', 'stars') as p`);
+} catch (e) {
+  startGameOutsideWindowThrew = true;
+  if (e.code !== "P0006") throw new Error(`start_game outside window: expected errcode P0006, got ${e.code} (${e.message})`);
+  console.log("start_game outside window correctly threw P0006:", e.message);
+}
+if (!startGameOutsideWindowThrew) throw new Error("start_game: expected a throw for a date outside the +/-14h window");
+
+// A daily_games row that exists for an in-window date but is still 'pending'
+// (not yet approved) must be treated the same as no puzzle at all: P0002.
+// Reuse `win` (computed above for start_puzzle) for a deterministic in-window
+// date, and 'duo' so we don't collide with today's already-approved rows.
+const pendingGameDate = win.rows[0].hi;
+await db.exec(`reset role`);
+const pendingGameExisting = await db.query(
+  `select status from public.daily_games where date = '${pendingGameDate}' and game = 'duo'`,
+);
+if (pendingGameExisting.rows.length > 0) {
+  await db.exec(`update public.daily_games set status = 'pending' where date = '${pendingGameDate}' and game = 'duo'`);
+} else {
+  await db.exec(`
+    insert into public.daily_games (date, game, number, spec, solution, status, difficulty) values
+      ('${pendingGameDate}', 'duo', 999, '{"n":6}'::jsonb, '{"cells":[]}'::jsonb, 'pending', 'easy');
+  `);
+}
+await db.exec(`set role app; set app.uid = '${B}';`);
+let startGamePendingThrew = false;
+try {
+  await db.query(`select public.start_game('${pendingGameDate}', 'duo') as p`);
+} catch (e) {
+  startGamePendingThrew = true;
+  if (e.code !== "P0002") throw new Error(`start_game pending: expected errcode P0002, got ${e.code} (${e.message})`);
+  console.log("start_game for a pending daily_games row correctly threw P0002:", e.message);
+}
+if (!startGamePendingThrew) throw new Error("start_game: expected a throw for a pending (not yet approved) game");
+await db.exec(`reset role`);
+if (pendingGameExisting.rows.length > 0) {
+  await db.exec(`update public.daily_games set status = '${pendingGameExisting.rows[0].status}' where date = '${pendingGameDate}' and game = 'duo'`);
+} else {
+  await db.exec(`delete from public.daily_games where date = '${pendingGameDate}' and game = 'duo'`);
+}
+await db.exec(`set role app; set app.uid = '${B}';`);
+
+let solutionSelectDenied = false;
+try {
+  await db.query(`select solution from public.daily_games where date = '${today}' and game = 'stars'`);
+} catch (e) {
+  solutionSelectDenied = true;
+  console.log("daily_games.solution select correctly denied:", e.message.split("\n")[0]);
+}
+if (!solutionSelectDenied) throw new Error("RLS: daily_games.solution must not be selectable by app");
+
+const specRows = await db.query(`select spec, number from public.daily_games where date = '${today}'`);
+if (specRows.rows.length !== 3) throw new Error(`daily_games: expected 3 rows for today, got ${specRows.rows.length}`);
+console.log("daily_games: solution column denied, spec/number readable, 3 rows for today - OK");
+
+// The authenticated column grant on daily_games must never include `solution`
+// (A-LOW). Derive the actual granted column list from information_schema
+// rather than hard-coding it, so this fails the moment the migration's grant
+// changes underneath it.
+await db.exec(`reset role`);
+const grantedCols = await db.query(`
+  select column_name from information_schema.column_privileges
+  where table_schema = 'public' and table_name = 'daily_games'
+    and grantee = 'authenticated' and privilege_type = 'SELECT'
+  order by column_name
+`);
+const grantedColNames = grantedCols.rows.map((r) => r.column_name).sort();
+if (grantedColNames.includes("solution")) {
+  throw new Error(`daily_games grant: 'solution' must never be granted to authenticated, got ${JSON.stringify(grantedColNames)}`);
+}
+if (grantedColNames.includes("seed")) {
+  throw new Error(`daily_games grant: 'seed' must not be granted to authenticated, got ${JSON.stringify(grantedColNames)}`);
+}
+const expectedGrantedCols = ["created_at", "date", "difficulty", "game", "number", "spec", "status"];
+if (JSON.stringify(grantedColNames) !== JSON.stringify(expectedGrantedCols)) {
+  throw new Error(`daily_games grant: expected ${JSON.stringify(expectedGrantedCols)}, got ${JSON.stringify(grantedColNames)}`);
+}
+console.log(`daily_games: authenticated column grant is exactly ${JSON.stringify(grantedColNames)} (no solution, no seed) - OK`);
+await db.exec(`set role app; set app.uid = '${B}';`);
+
+// An out-of-window daily_games row must be invisible to a non-admin app
+// caller (row policy limits by date), even though the column grant would
+// otherwise let them read its non-solution columns.
+await db.exec(`reset role`);
+await db.exec(`
+  insert into public.daily_games (date, game, number, spec, solution, difficulty) values
+    ('2000-01-01', 'stars', 9999, '{"n":5}'::jsonb, '{"stars":[0,1,2,3,4]}'::jsonb, 'easy');
+`);
+await db.exec(`set role app; set app.uid = '${B}';`);
+const oowHiddenFromApp = await db.query(`select 1 from public.daily_games where date = '2000-01-01'`);
+if (oowHiddenFromApp.rows.length !== 0) throw new Error("RLS: an out-of-window daily_games row must be hidden from a non-admin app caller");
+console.log("daily_games: out-of-window row hidden from non-admin app caller - OK");
+
+// game_results, daily_games and game_starts have no client insert/update/delete
+// policy: writes from `app` (even though the blanket grant gives it the
+// underlying SQL privilege) must be blocked by RLS.
+let gameResultsInsertDenied = false;
+try {
+  await db.query(`
+    insert into public.game_results (user_id, date, game, elapsed_ms, mistakes, solved, gave_up, score, tz) values
+      ('${B}', '${today}', 'trail', 1000, 0, true, false, 900, 'UTC')
+  `);
+} catch (e) {
+  gameResultsInsertDenied = true;
+  console.log("game_results insert as app correctly denied:", e.message.split("\n")[0]);
+}
+if (!gameResultsInsertDenied) throw new Error("RLS: app must not be able to insert into game_results");
+
+const gameResultsUpdate = await db.query(`update public.game_results set score = 1 where date = '${today}'`);
+const gameResultsUpdateCount = gameResultsUpdate.affectedRows ?? gameResultsUpdate.rows.length;
+if (gameResultsUpdateCount !== 0) throw new Error(`RLS: app's update on game_results should affect 0 rows, got ${gameResultsUpdateCount}`);
+
+const gameResultsDelete = await db.query(`delete from public.game_results where date = '${today}'`);
+const gameResultsDeleteCount = gameResultsDelete.affectedRows ?? gameResultsDelete.rows.length;
+if (gameResultsDeleteCount !== 0) throw new Error(`RLS: app's delete on game_results should affect 0 rows, got ${gameResultsDeleteCount}`);
+console.log("game_results: app's update/delete affect 0 rows (RLS) - OK");
+
+let dailyGamesInsertDenied = false;
+try {
+  await db.query(`
+    insert into public.daily_games (date, game, number, spec, solution, difficulty) values
+      ('2099-06-01', 'trail', 1, '{"n":5}'::jsonb, '{"path":[]}'::jsonb, 'easy')
+  `);
+} catch (e) {
+  dailyGamesInsertDenied = true;
+  console.log("daily_games insert as app correctly denied:", e.message.split("\n")[0]);
+}
+if (!dailyGamesInsertDenied) throw new Error("RLS: app must not be able to insert into daily_games");
+
+const dailyGamesDelete = await db.query(`delete from public.daily_games where date = '${today}'`);
+const dailyGamesDeleteCount = dailyGamesDelete.affectedRows ?? dailyGamesDelete.rows.length;
+if (dailyGamesDeleteCount !== 0) throw new Error(`RLS: app's delete on daily_games should affect 0 rows, got ${dailyGamesDeleteCount}`);
+console.log("daily_games: app's insert denied, delete affects 0 rows (RLS) - OK");
+
+let gameStartsInsertDenied = false;
+try {
+  await db.query(`insert into public.game_starts (user_id, date, game) values ('${B}', '${today}', 'duo')`);
+} catch (e) {
+  gameStartsInsertDenied = true;
+  console.log("game_starts insert as app correctly denied:", e.message.split("\n")[0]);
+}
+if (!gameStartsInsertDenied) throw new Error("RLS: app must not be able to insert into game_starts directly (must go through start_game)");
+await db.exec(`reset role`);
+
+// game_starts is invisible to clients, even the row the caller themselves
+// just created via start_game above.
+await db.exec(`set role app; set app.uid = '${B}';`);
+const gameStartsHiddenFromApp = await db.query(`select * from public.game_starts`);
+if (gameStartsHiddenFromApp.rows.length !== 0) throw new Error("RLS: game_starts must be invisible to app");
+
+// Calling start_game again for the same (user, date, game) must be idempotent:
+// no second row, started_at unchanged.
+await db.exec(`reset role`);
+const gameStartsRowBefore = await db.query(
+  `select started_at from public.game_starts where user_id = '${B}' and date = '${today}' and game = 'stars'`,
+);
+if (gameStartsRowBefore.rows.length !== 1) {
+  throw new Error(`start_game: expected one game_starts row for B/today/stars, got ${gameStartsRowBefore.rows.length}`);
+}
+const startedAtBefore = new Date(gameStartsRowBefore.rows[0].started_at).getTime();
+await db.exec(`set role app; set app.uid = '${B}';`);
+await db.query(`select public.start_game('${today}', 'stars') as p`);
+await db.exec(`reset role`);
+const gameStartsRow = await db.query(
+  `select started_at from public.game_starts where user_id = '${B}' and date = '${today}' and game = 'stars'`,
+);
+if (gameStartsRow.rows.length !== 1) {
+  throw new Error(`start_game: expected still exactly one game_starts row, got ${gameStartsRow.rows.length}`);
+}
+if (new Date(gameStartsRow.rows[0].started_at).getTime() !== startedAtBefore) {
+  throw new Error("start_game: started_at changed on repeat call (should be idempotent)");
+}
+console.log("game_starts: row created for B by start_game, invisible to app, repeat call idempotent - OK");
+
+// ---------------------------------------------------------------------------
+// game_results / board() game picker / streak()
+// ---------------------------------------------------------------------------
+
+await db.exec(`
+  insert into public.game_results (user_id, date, game, elapsed_ms, elapsed_source, mistakes, solved, gave_up, score, tz) values
+    ('${A}', '${today}', 'stars', 30000, 'server', 0, true, false, 900, 'UTC'),
+    ('${A}', '${today}', 'duo',   40000, 'server', 0, true, false, 800, 'UTC'),
+    ('${B}', '${today}', 'stars', 50000, 'server', 0, true, false, 700, 'UTC'),
+    ('${D}', '${today}', 'stars', 60000, 'server', 0, true, false, 500, 'UTC');
+`);
+console.log("game_results: seeded A (stars 900, duo 800), B (stars 700), D (stars 500) for today - OK");
+
+await db.exec(`set role app; set app.uid = '${A}';`);
+
+const starsBoard = await db.query(
+  `select user_id, display_name, score from public.board('friends', null, 'today', '${today}', 'stars')`,
+);
+const starsA = starsBoard.rows.find((r) => r.user_id === A);
+const starsB = starsBoard.rows.find((r) => r.user_id === B);
+if (!starsA || !starsB) throw new Error(`stars board should include A and B, got ${JSON.stringify(starsBoard.rows)}`);
+if (!(starsA.score > starsB.score)) {
+  throw new Error(`stars board: expected A (900) ranked above B (700), got ${JSON.stringify(starsBoard.rows)}`);
+}
+console.log("board(..., 'stars') ranks A above B - OK");
+
+const totalBoard = await db.query(
+  `select user_id, display_name, score from public.board('friends', null, 'today', '${today}', 'total')`,
+);
+const totalA = totalBoard.rows.find((r) => r.user_id === A);
+const totalB = totalBoard.rows.find((r) => r.user_id === B);
+if (totalA.score !== 2620) {
+  throw new Error(`board total: expected A 2620 (920 lineup + 900 stars + 800 duo), got ${totalA.score}`);
+}
+if (totalB.score !== 800) {
+  throw new Error(`board total: expected B 800 (100 lineup + 700 stars), got ${totalB.score}`);
+}
+console.log("board(..., 'total') sums lineup + all three games: A 2620, B 800 - OK");
+
+// week/total board: summing two days' worth of game_results, and a
+// game-specific (stars) prev_rank derived purely from game_results.
+const todayWeekday = new Date(`${today}T00:00:00Z`).getUTCDay(); // 0=Sun..6=Sat
+// Pick a second date guaranteed to fall in the same ISO week as `today`
+// (date_trunc('week', ...) is Monday-start): yesterday is safe unless today
+// itself is Monday, in which case yesterday is last week — use tomorrow instead.
+const secondGameDate = todayWeekday === 1 ? tomorrow : yest;
+await db.exec(`reset role`);
+await db.exec(`
+  insert into public.daily_games (date, game, number, spec, solution, difficulty) values
+    ('${secondGameDate}', 'stars', 50, '{"n":5}'::jsonb, '{"stars":[0,1,2,3,4]}'::jsonb, 'easy')
+  on conflict (date, game) do nothing;
+  insert into public.game_results (user_id, date, game, elapsed_ms, elapsed_source, mistakes, solved, gave_up, score, tz) values
+    ('${A}', '${secondGameDate}', 'stars', 20000, 'server', 0, true, false, 850, 'UTC'),
+    ('${B}', '${secondGameDate}', 'stars', 20000, 'server', 0, true, false, 950, 'UTC')
+  on conflict (user_id, date, game) do nothing;
+`);
+
+await db.exec(`set role app; set app.uid = '${A}';`);
+const weekStarsBoard = await db.query(
+  `select user_id, score from public.board('friends', null, 'week', '${today}', 'stars')`,
+);
+const weekStarsA = weekStarsBoard.rows.find((r) => r.user_id === A);
+const weekStarsB = weekStarsBoard.rows.find((r) => r.user_id === B);
+if (!weekStarsA || weekStarsA.score !== 1750) {
+  throw new Error(`board week stars: expected A 1750 (900 + 850), got ${JSON.stringify(weekStarsA)}`);
+}
+if (!weekStarsB || weekStarsB.score !== 1650) {
+  throw new Error(`board week stars: expected B 1650 (700 + 950), got ${JSON.stringify(weekStarsB)}`);
+}
+console.log("board(..., 'week', 'stars') sums two days: A 1750, B 1650 - OK");
+
+const weekTotalBoard = await db.query(
+  `select user_id, score from public.board('friends', null, 'week', '${today}', 'total')`,
+);
+const weekTotalA = weekTotalBoard.rows.find((r) => r.user_id === A);
+const weekTotalB = weekTotalBoard.rows.find((r) => r.user_id === B);
+// 'total' over 'week' also picks up A's/B's own Lineup history (twoAgo/yest
+// scores from the very top of this file) whenever those dates fall in the
+// same ISO week as `today` — not just the two stars rows seeded just above —
+// so derive the expected sum independently from the raw tables (mirroring
+// board()'s own d_from/d_to for 'week') rather than hand-adding fixture scores.
+const weekRange = await db.query(
+  `select date_trunc('week', '${today}'::date)::date::text as d_from, (date_trunc('week', '${today}'::date)::date + 6)::text as d_to`,
+);
+const { d_from: weekFrom, d_to: weekTo } = weekRange.rows[0];
+const expectedWeekTotals = await db.query(`
+  select uid, sum(sc)::int as total from (
+    select r.user_id as uid, r.score as sc from public.results r where r.puzzle_date between '${weekFrom}' and '${weekTo}'
+    union all
+    select g.user_id as uid, g.score as sc from public.game_results g where g.date between '${weekFrom}' and '${weekTo}'
+  ) x where uid in ('${A}', '${B}')
+  group by uid
+`);
+const expectedWeekTotalA = expectedWeekTotals.rows.find((r) => r.uid === A)?.total ?? 0;
+const expectedWeekTotalB = expectedWeekTotals.rows.find((r) => r.uid === B)?.total ?? 0;
+if (!weekTotalA || weekTotalA.score !== expectedWeekTotalA) {
+  throw new Error(`board week total: expected A ${expectedWeekTotalA}, got ${JSON.stringify(weekTotalA)}`);
+}
+if (!weekTotalB || weekTotalB.score !== expectedWeekTotalB) {
+  throw new Error(`board week total: expected B ${expectedWeekTotalB}, got ${JSON.stringify(weekTotalB)}`);
+}
+console.log(`board(..., 'week', 'total') sums lineup + games across the week: A ${weekTotalA.score}, B ${weekTotalB.score} - OK`);
+
+// stars prev_rank: for the day *after* secondGameDate, period 'today' compares
+// against secondGameDate as the previous period — B (950) should outrank A (850).
+const dayAfterSecond = new Date(new Date(`${secondGameDate}T00:00:00Z`).getTime() + 86400e3).toISOString().slice(0, 10);
+const prevRankBoard = await db.query(
+  `select user_id, prev_rank from public.board('friends', null, 'today', '${dayAfterSecond}', 'stars')`,
+);
+const prevRankA = prevRankBoard.rows.find((r) => r.user_id === A);
+const prevRankB = prevRankBoard.rows.find((r) => r.user_id === B);
+if (!prevRankA || !prevRankB || !(prevRankB.prev_rank < prevRankA.prev_rank)) {
+  throw new Error(`board stars prev_rank: expected B ranked above A on ${secondGameDate}, got ${JSON.stringify(prevRankBoard.rows)}`);
+}
+console.log(`board(..., 'stars') prev_rank reflects ${secondGameDate}'s stars-only scores: B outranks A - OK`);
+
+const defaultBoard = await db.query(`select user_id, score from public.board('friends', null, 'today', '${today}')`);
+if (defaultBoard.rows.length === 0) throw new Error("board() with 4 args (default 'lineup') returned no rows");
+console.log("board() with 4 args still works, defaulting to 'lineup' - OK");
+
+let bogusGameThrew = false;
+try {
+  await db.query(`select * from public.board('friends', null, 'today', '${today}', 'bogus')`);
+} catch (e) {
+  bogusGameThrew = true;
+  console.log("board(..., 'bogus') correctly threw:", e.message.split("\n")[0]);
+}
+if (!bogusGameThrew) throw new Error("board: expected a throw for an unknown game_kind");
+
+// D's game_results row must be invisible to A: no match, no shared can_see.
+const gameResultsSeenByA = await db.query(`select user_id from public.game_results where date = '${today}'`);
+const gameResultsIdsSeenByA = gameResultsSeenByA.rows.map((r) => r.user_id).sort();
+if (gameResultsIdsSeenByA.includes(D)) {
+  throw new Error(`RLS: A must not see D's game_results row, got ${JSON.stringify(gameResultsIdsSeenByA)}`);
+}
+if (!gameResultsIdsSeenByA.includes(A) || !gameResultsIdsSeenByA.includes(B)) {
+  throw new Error(`RLS: A should see A's and B's game_results rows, got ${JSON.stringify(gameResultsIdsSeenByA)}`);
+}
+console.log("game_results: A sees A's and B's rows but not D's (can_see) - OK");
+
+let playedOnDeniedToApp = false;
+try {
+  await db.query(`select public.played_on('${A}', '${today}')`);
+} catch (e) {
+  playedOnDeniedToApp = true;
+  console.log("played_on() correctly denied to app:", e.message.split("\n")[0]);
+}
+if (!playedOnDeniedToApp) throw new Error("RLS: played_on() must not be executable by app");
+
+await db.exec(`reset role`);
+
+// streak(): a user with no `results` rows at all, but game_results rows
+// today and yesterday, should still show a 2-day streak.
+const GAMES_STREAK_USER = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+await db.exec(`
+  insert into auth.users values ('${GAMES_STREAK_USER}');
+  insert into public.users (id, phone_hmac, display_name) values ('${GAMES_STREAK_USER}', 'hgs', 'Games Streaker');
+  insert into public.game_results (user_id, date, game, elapsed_ms, elapsed_source, mistakes, solved, gave_up, score, tz) values
+    ('${GAMES_STREAK_USER}', '${yest}',  'stars', 20000, 'server', 0, true, false, 950, 'UTC'),
+    ('${GAMES_STREAK_USER}', '${today}', 'stars', 20000, 'server', 0, true, false, 950, 'UTC');
+`);
+const gamesStreak = await db.query(`select public.streak('${GAMES_STREAK_USER}') as n`);
+if (gamesStreak.rows[0].n !== 2) {
+  throw new Error(`streak: expected 2 for a user with only game_results rows, got ${gamesStreak.rows[0].n}`);
+}
+console.log("streak(): counts game_results-only days with no `results` rows - OK, streak=2");
+
+// streak(): played_on() must bridge the two tables — Lineup (`results`)
+// yesterday and a grid game (`game_results`) today should still count as a
+// 2-day streak, not reset to 1 (or 0) because the two days used different tables.
+const BRIDGE_STREAK_USER = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+await db.exec(`
+  insert into auth.users values ('${BRIDGE_STREAK_USER}');
+  insert into public.users (id, phone_hmac, display_name) values ('${BRIDGE_STREAK_USER}', 'hbs', 'Bridge Streaker');
+  insert into public.results (user_id, puzzle_date, attempts, tries, solved, elapsed_ms, score, tz) values
+    ('${BRIDGE_STREAK_USER}', '${yest}', '[]', 1, true, 20000, 950, 'UTC');
+  insert into public.game_results (user_id, date, game, elapsed_ms, elapsed_source, mistakes, solved, gave_up, score, tz) values
+    ('${BRIDGE_STREAK_USER}', '${today}', 'stars', 20000, 'server', 0, true, false, 900, 'UTC');
+`);
+const bridgeStreak = await db.query(`select public.streak('${BRIDGE_STREAK_USER}') as n`);
+if (bridgeStreak.rows[0].n !== 2) {
+  throw new Error(`streak: expected 2 for Lineup-yesterday + game_results-today bridging, got ${bridgeStreak.rows[0].n}`);
+}
+console.log("streak(): played_on() bridges Lineup yesterday with a grid game today - OK, streak=2");
+
+// ---------------------------------------------------------------------------
 // delete_account
 // ---------------------------------------------------------------------------
 // Reuses circle ABC123 (owner A; C joined earlier via join_circle, B later),
@@ -738,6 +1154,14 @@ if (isAdminAfter.rows[0].v !== true) throw new Error("is_admin: B should be admi
 const adminCount = await db.query(`select count(*)::int as n from public.puzzles`);
 if (adminCount.rows[0].n !== allPuzzles) throw new Error(`is_admin policies: admin B expected to see all ${allPuzzles} puzzles, got ${adminCount.rows[0].n}`);
 console.log(`is_admin: B (admin) sees all ${allPuzzles} puzzles, including the out-of-window pending one - OK`);
+
+// The out-of-window daily_games row (date '2000-01-01') seeded in the games-hub
+// section above must be visible to an admin, unlike the non-admin app check earlier.
+const adminOowGame = await db.query(`select game from public.daily_games where date = '2000-01-01'`);
+if (adminOowGame.rows.length !== 1 || adminOowGame.rows[0].game !== "stars") {
+  throw new Error(`is_admin policies: admin B expected to see the out-of-window daily_games row, got ${JSON.stringify(adminOowGame.rows)}`);
+}
+console.log("is_admin: admin B sees the out-of-window daily_games row - OK");
 
 const approveResult = await db.query(`update public.puzzles set status = 'approved' where date = '${admin30}'`);
 const approveCount = approveResult.affectedRows ?? approveResult.rows.length;

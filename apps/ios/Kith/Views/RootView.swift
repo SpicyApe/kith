@@ -83,7 +83,7 @@ private struct LaunchView: View {
     var body: some View {
         VStack(spacing: 16) {
             Text("Kith")
-                .font(.system(size: 44, weight: .bold, design: .rounded))
+                .font(.system(.largeTitle, design: .rounded, weight: .bold))
                 .foregroundStyle(Color.kithAccent)
             ProgressView()
         }
@@ -103,7 +103,9 @@ private struct MainTabs: View {
         TabView(selection: $model.tab) {
             // The identifier goes on the label inside `tabItem`, not on the tab's content
             // view: that label is the element XCUITest finds in the tab bar.
-            TodayView()
+            // The Today tab is the games hub (docs/07); `TodayView` is the Lineup play
+            // screen it pushes.
+            HubView()
                 .tabItem {
                     Label("Today", systemImage: "square.stack.3d.up")
                         .accessibilityIdentifier("tab.today")

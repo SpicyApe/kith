@@ -24,6 +24,8 @@ jobs:
         run: ${{ env.XCODE_SELECT }}
       - name: LineupEngine tests
         run: swift test --package-path packages/LineupEngine
+      - name: GridGames tests
+        run: swift test --package-path packages/GridGames
       - name: KithCore tests
         run: swift test --package-path packages/KithCore
 

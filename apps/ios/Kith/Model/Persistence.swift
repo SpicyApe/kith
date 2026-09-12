@@ -5,6 +5,7 @@
 // hash set, today's puzzle, the last local result, and one queued offline result.
 
 import Foundation
+import GridGames
 import KithCore
 import LineupEngine
 
@@ -13,6 +14,45 @@ struct QueuedResult: Codable, Sendable, Equatable {
     let puzzleDate: String
     let tz: String
     let attempts: [Attempt]
+}
+
+/// The same idea for a grid game. `GameAnswer` is `Encodable` only (KithCore contract),
+/// so the three possible answer shapes are stored as plain arrays and rebuilt on replay.
+/// Unlike Lineup there can be three of these pending at once, so the store holds an array.
+struct QueuedGameResult: Codable, Sendable, Equatable {
+    let date: String
+    let game: GameKind
+    let tz: String
+    let elapsedMs: Int
+    let mistakes: Int
+    let gaveUp: Bool
+    var stars: [Int]?
+    var cells: [[Int]]?
+    var path: [[Int]]?
+
+    init(date: String, game: GameKind, tz: String, elapsedMs: Int, mistakes: Int,
+         gaveUp: Bool, answer: GameAnswer?) {
+        self.date = date
+        self.game = game
+        self.tz = tz
+        self.elapsedMs = elapsedMs
+        self.mistakes = mistakes
+        self.gaveUp = gaveUp
+        switch answer {
+        case .stars(let value): self.stars = value
+        case .duo(let value): self.cells = value
+        case .trail(let value): self.path = value
+        case nil: break
+        }
+    }
+
+    /// Rebuilds the `answer` the queued submission has to send. Nil for a give-up.
+    var answer: GameAnswer? {
+        if let stars { return .stars(stars) }
+        if let cells { return .duo(cells) }
+        if let path { return .trail(path) }
+        return nil
+    }
 }
 
 /// Top-level JSON fragments are awkward to round-trip, so dates get a box.
@@ -29,6 +69,8 @@ enum StoreKey {
     static let cachedPuzzle = "cached-puzzle"
     static let localResult = "local-result"
     static let queuedResult = "queued-result"
+    /// `[QueuedGameResult]` — the grid-game equivalent of `queuedResult` (docs/07).
+    static let queuedGameResults = "queued-game-results"
     static let friendNames = "friend-names"
     /// Set once the contacts pre-prompt has been shown a second time (`AppModel.maybeReaskForContacts`).
     static let contactsReasked = "contacts-reasked"
@@ -82,7 +124,7 @@ struct FileStore: Sendable {
         let keys = [
             StoreKey.directory, StoreKey.syncedHashes, StoreKey.lastContactSync,
             StoreKey.cachedPuzzle, StoreKey.localResult, StoreKey.queuedResult,
-            StoreKey.friendNames, StoreKey.contactsReasked
+            StoreKey.queuedGameResults, StoreKey.friendNames, StoreKey.contactsReasked
         ]
         for key in keys { remove(key: key) }
     }

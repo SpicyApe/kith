@@ -18,9 +18,12 @@ A daily puzzle app where the leaderboard is made of the contacts in your phone w
 | `supabase/functions/{delete-account,send-pushes,generate-puzzles}/` | Account deletion, APNs pushes from cron, puzzle generator | `deno test --allow-read` |
 | `admin/index.html` | Single-file review queue for the content author | manual |
 | `web/` | Landing site, share/circle link fallbacks, privacy policy, terms, AASA (Cloudflare Pages) | manual |
+| `packages/GridGames/` | Pure Swift engines for the three grid games (Stars, Duo, Trail): state, live validation, completion, share text. Mirrors the TypeScript validators. | `swift test` |
+| `supabase/functions/_shared/games/` | Generators with uniqueness solvers, validators and share rows for Stars, Duo, Trail; `submit-game` validates answers server-side | `deno test --allow-read` |
 | `packages/KithCore/` | Platform-neutral client logic: API client, contact hashing and sync planning, local-day math, screen presenters | `swift test` |
 | `apps/ios/` | SwiftUI app target (XcodeGen spec + sources). Builds only on macOS; CI produces an unsigned IPA | `.github/workflows/ios.yml` |
 | `docs/06-deployment-runbook.md` | Every step from repo to phone | — |
+| `docs/07-games-hub.md` | The games hub: Stars, Duo, Trail rules, scoring, data model, wire formats, HIG pass | — |
 
 ## Status
 

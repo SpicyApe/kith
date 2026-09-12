@@ -23,6 +23,7 @@ struct ResultsView: View {
     @State private var showFacts = false
     @State private var didShare = false
     @FocusState private var tauntFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         @Bindable var model = model
@@ -78,7 +79,7 @@ struct ResultsView: View {
             // element, so `results.score` and `results.time` are both addressable.
             HStack(alignment: .firstTextBaseline, spacing: 16) {
                 Text("\(summary.score)")
-                    .font(.system(size: 52, weight: .bold, design: .rounded))
+                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
                     .monospacedDigit()
                     .accessibilityLabel("Score \(summary.score)")
                     .accessibilityIdentifier("results.score")
@@ -106,7 +107,12 @@ struct ResultsView: View {
                 Spacer()
                 if lines.count > 2 {
                     Button(showFacts ? "Hide" : "Show facts") {
-                        withAnimation { showFacts.toggle() }
+                        // HIG: Reduce Motion means no animated expansion.
+                        if reduceMotion {
+                            showFacts.toggle()
+                        } else {
+                            withAnimation { showFacts.toggle() }
+                        }
                     }
                     .font(.subheadline)
                     .accessibilityLabel(showFacts ? "Hide the rest of the order" : "Show the whole order and its facts")

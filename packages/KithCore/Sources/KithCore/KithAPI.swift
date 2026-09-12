@@ -6,6 +6,7 @@
 // bodies of SupabaseKithAPI only; the protocol and doc comments are frozen.
 
 import Foundation
+import GridGames
 import LineupEngine
 
 public protocol KithAPI: Sendable {
@@ -18,8 +19,20 @@ public protocol KithAPI: Sendable {
     // RPCs
     /// `start_puzzle(d)`; the jsonb it returns decodes directly into `LineupEngine.Puzzle`.
     func startPuzzle(date: String) async throws -> Puzzle
-    func board(kind: BoardKind, scopeId: String?, period: BoardPeriod, date: String) async throws -> [BoardRow]
+    /// `board(kind, scope_id, period, for_date, game_kind)`; `game` picks the column (Lineup by default).
+    func board(kind: BoardKind, scopeId: String?, period: BoardPeriod, date: String, game: BoardGame) async throws -> [BoardRow]
     func joinCircle(code: String) async throws -> String
+
+    // Games hub (docs/07)
+    /// RPC `start_game(d, g)`.
+    func startGame(date: String, game: GameKind) async throws -> StartedGame
+    /// Edge function `submit-game`; `answer` is nil only when `gaveUp`.
+    func submitGame(date: String, game: GameKind, tz: String, elapsedMs: Int, mistakes: Int,
+                    gaveUp: Bool, answer: GameAnswer?) async throws -> SubmitGameResponse
+    /// `game_results?select=date,game,elapsed_ms,solved,gave_up,score&user_id=eq.<me>&date=gte.<since>&order=date.asc`.
+    func myGameResults(sinceDate: String) async throws -> [GameResultSummary]
+    /// `daily_games?select=date,game,number,difficulty&date=eq.<date>&order=game.asc` (RLS limits to the ±14 h window).
+    func dailyGames(date: String) async throws -> [DailyGameRow]
     func myStreak() async throws -> Int
     func track(_ name: String, props: [String: String]) async throws
     func hideTaunt(author: String, date: String) async throws
@@ -39,6 +52,13 @@ public protocol KithAPI: Sendable {
     func registerDevice(apnsToken: String, env: String) async throws
     /// Values and facts for the five items of a puzzle the caller has already played (RLS gates it). Returned in the order of `itemIds`.
     func reveal(itemIds: [Int]) async throws -> [RevealItem]
+}
+
+public extension KithAPI {
+    /// Lineup board, for call sites written before the games hub.
+    func board(kind: BoardKind, scopeId: String?, period: BoardPeriod, date: String) async throws -> [BoardRow] {
+        try await board(kind: kind, scopeId: scopeId, period: period, date: date, game: .lineup)
+    }
 }
 
 /// Partial update of the caller's `users` row. Only non-nil fields are sent.
@@ -187,16 +207,17 @@ public final class SupabaseKithAPI: KithAPI {
         return try await send(request)
     }
 
-    public func board(kind: BoardKind, scopeId: String?, period: BoardPeriod, date: String) async throws -> [BoardRow] {
+    public func board(kind: BoardKind, scopeId: String?, period: BoardPeriod, date: String, game: BoardGame) async throws -> [BoardRow] {
         let token = try await requireToken()
         struct Body: Encodable {
             let kind: String
             let scope_id: String?
             let period: String
             let for_date: String
+            let game_kind: String
 
             private enum CodingKeys: String, CodingKey {
-                case kind, scope_id, period, for_date
+                case kind, scope_id, period, for_date, game_kind
             }
 
             func encode(to encoder: Encoder) throws {
@@ -209,13 +230,14 @@ public final class SupabaseKithAPI: KithAPI {
                 }
                 try container.encode(period, forKey: .period)
                 try container.encode(for_date, forKey: .for_date)
+                try container.encode(game_kind, forKey: .game_kind)
             }
         }
         let request = try HTTPRequest(
             method: .post,
             url: url(path: "rest/v1/rpc/board"),
             headers: baseHeaders(token: token),
-            body: JSONEncoder().encode(Body(kind: kind.rawValue, scope_id: scopeId, period: period.rawValue, for_date: date))
+            body: JSONEncoder().encode(Body(kind: kind.rawValue, scope_id: scopeId, period: period.rawValue, for_date: date, game_kind: game.rawValue))
         )
         return try await send(request)
     }
@@ -534,4 +556,89 @@ public final class SupabaseKithAPI: KithAPI {
             throw KithError.api(status: response.status, code: "unknown", message: "")
         }
     }
+    // MARK: Games hub (docs/07) — bodies to implement
+
+    public func startGame(date: String, game: GameKind) async throws -> StartedGame {
+        let token = try await requireToken()
+        struct Body: Encodable { let d: String; let g: String }
+        let request = try HTTPRequest(
+            method: .post,
+            url: url(path: "rest/v1/rpc/start_game"),
+            headers: baseHeaders(token: token),
+            body: JSONEncoder().encode(Body(d: date, g: game.rawValue))
+        )
+        return try await send(request)
+    }
+
+    public func submitGame(date: String, game: GameKind, tz: String, elapsedMs: Int, mistakes: Int,
+                           gaveUp: Bool, answer: GameAnswer?) async throws -> SubmitGameResponse {
+        let token = try await requireToken()
+        struct Body: Encodable {
+            let date: String
+            let game: String
+            let tz: String
+            let elapsedMs: Int
+            let mistakes: Int
+            let gaveUp: Bool
+            let answer: GameAnswer?
+
+            private enum CodingKeys: String, CodingKey {
+                case date, game, tz, elapsedMs, mistakes, gaveUp, answer
+            }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(date, forKey: .date)
+                try container.encode(game, forKey: .game)
+                try container.encode(tz, forKey: .tz)
+                try container.encode(elapsedMs, forKey: .elapsedMs)
+                try container.encode(mistakes, forKey: .mistakes)
+                try container.encode(gaveUp, forKey: .gaveUp)
+                if let answer {
+                    try container.encode(answer, forKey: .answer)
+                }
+            }
+        }
+        let request = try HTTPRequest(
+            method: .post,
+            url: url(path: "functions/v1/submit-game"),
+            headers: baseHeaders(token: token),
+            body: JSONEncoder().encode(Body(
+                date: date, game: game.rawValue, tz: tz, elapsedMs: elapsedMs,
+                mistakes: mistakes, gaveUp: gaveUp, answer: answer
+            ))
+        )
+        return try await send(request)
+    }
+
+    public func myGameResults(sinceDate: String) async throws -> [GameResultSummary] {
+        let token = try await requireToken()
+        let me = try meId(from: token)
+        let request = HTTPRequest(
+            method: .get,
+            url: url(path: "rest/v1/game_results", queryItems: [
+                URLQueryItem(name: "select", value: "date,game,elapsed_ms,solved,gave_up,score"),
+                URLQueryItem(name: "user_id", value: "eq.\(me)"),
+                URLQueryItem(name: "date", value: "gte.\(sinceDate)"),
+                URLQueryItem(name: "order", value: "date.asc"),
+            ]),
+            headers: baseHeaders(token: token)
+        )
+        return try await send(request)
+    }
+
+    public func dailyGames(date: String) async throws -> [DailyGameRow] {
+        let token = try await requireToken()
+        let request = HTTPRequest(
+            method: .get,
+            url: url(path: "rest/v1/daily_games", queryItems: [
+                URLQueryItem(name: "select", value: "date,game,number,difficulty"),
+                URLQueryItem(name: "date", value: "eq.\(date)"),
+                URLQueryItem(name: "order", value: "game.asc"),
+            ]),
+            headers: baseHeaders(token: token)
+        )
+        return try await send(request)
+    }
+
 }
