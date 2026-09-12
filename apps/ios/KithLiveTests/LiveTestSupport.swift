@@ -192,12 +192,17 @@ import XCTest
         field.typeText(text)
         // Verify the text landed (a tap that arrives mid-transition can leave the field
         // unfocused); retry once before giving up.
+        // Fields that auto-submit (the OTP code) may already be gone by now; only verify
+        // while the field is still on screen.
+        guard field.exists else { return }
         let landed = { (String(describing: field.value ?? "")).contains(text) }
-        if !landed() {
+        if !landed(), field.exists {
             field.tap()
             field.typeText(text)
         }
-        XCTAssertTrue(landed(), message + " (typed text did not land)", file: file, line: line)
+        if field.exists {
+            XCTAssertTrue(landed(), message + " (typed text did not land)", file: file, line: line)
+        }
     }
 
     /// Waits for an element to become enabled, then asserts it is. Polling the predicate is
