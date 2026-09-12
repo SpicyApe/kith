@@ -64,6 +64,8 @@ final class AppModel {
     var isBusy = false
     var errorMessage: String?
     var toast: ToastMessage?
+    /// Last error shown as a toast; never cleared. Surfaced by the UI-testing status element.
+    var lastErrorMessage: String?
 
     // Identity
     var profile: Profile?
@@ -1028,6 +1030,7 @@ final class AppModel {
     func show(toast text: String, isError: Bool) {
         let message = ToastMessage(text: text, isError: isError)
         toast = message
+        if isError { lastErrorMessage = text }
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_600_000_000)
             guard let self, self.toast?.id == message.id else { return }

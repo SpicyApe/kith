@@ -39,10 +39,29 @@ struct RootView: View {
             }
         }
         .toast(model.toast)
+        .overlay(alignment: .topLeading) {
+            #if DEBUG
+            if UITesting.controlsActive {
+                // Test-only, near-invisible status line so a UI-test failure tree shows the
+                // model's state (stage, onboarding step, busy flag, last error).
+                Text(debugStatus)
+                    .font(.system(size: 1))
+                    .opacity(0.02)
+                    .accessibilityLabel(debugStatus)
+                    .accessibilityIdentifier("debug.status")
+            }
+            #endif
+        }
         .fullScreenCover(isPresented: .constant(model.tail != .none)) {
             OnboardingTailView()
         }
     }
+
+    #if DEBUG
+    private var debugStatus: String {
+        "stage=(String(describing: model.stage)) step=(String(describing: model.onboarding.step)) busy=(model.isBusy) tail=(String(describing: model.tail)) error=(model.lastErrorMessage ?? "none")"
+    }
+    #endif
 
     /// Without a `Config.plist` every request goes to a placeholder host and fails with
     /// an unhelpful network error. Say so at the top of the screen instead.
