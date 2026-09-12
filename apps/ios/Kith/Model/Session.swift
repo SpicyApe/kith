@@ -12,7 +12,7 @@ import Supabase
 ///
 /// `SupabaseClient` is thread-safe (it serialises its own state internally) and the
 /// only stored property here is an immutable `let`, so the wrapper is `@unchecked Sendable`.
-final class AuthSession: AuthTokenProvider, @unchecked Sendable {
+final class AuthSession: AuthProviding, @unchecked Sendable {
     let client: SupabaseClient
 
     init(url: URL, anonKey: String) {
@@ -33,7 +33,7 @@ final class AuthSession: AuthTokenProvider, @unchecked Sendable {
 
     // MARK: Sign in
 
-    func sendCode(to phone: String) async throws {
+    func sendCode(phone: String) async throws {
         try await client.auth.signInWithOTP(phone: phone)
     }
 
@@ -48,7 +48,7 @@ final class AuthSession: AuthTokenProvider, @unchecked Sendable {
     }
 
     /// The signed-in user's id, or nil when signed out.
-    func userId() async -> String? {
+    func currentUserId() async -> String? {
         guard let session = try? await client.auth.session else { return nil }
         return session.user.id.uuidString.lowercased()
     }

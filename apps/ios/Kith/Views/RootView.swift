@@ -55,6 +55,7 @@ struct RootView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.red.opacity(0.85))
             .accessibilityLabel("Configuration missing. See the apps slash ios README.")
+            .accessibilityIdentifier("banner.configMissing")
     }
 }
 
@@ -81,20 +82,34 @@ private struct MainTabs: View {
         @Bindable var model = model
 
         TabView(selection: $model.tab) {
+            // The identifier goes on the label inside `tabItem`, not on the tab's content
+            // view: that label is the element XCUITest finds in the tab bar.
             TodayView()
-                .tabItem { Label("Today", systemImage: "square.stack.3d.up") }
+                .tabItem {
+                    Label("Today", systemImage: "square.stack.3d.up")
+                        .accessibilityIdentifier("tab.today")
+                }
                 .tag(AppTab.today)
 
             BoardView()
-                .tabItem { Label("Board", systemImage: "list.number") }
+                .tabItem {
+                    Label("Board", systemImage: "list.number")
+                        .accessibilityIdentifier("tab.board")
+                }
                 .tag(AppTab.board)
 
             CirclesView()
-                .tabItem { Label("Circles", systemImage: "person.3") }
+                .tabItem {
+                    Label("Circles", systemImage: "person.3")
+                        .accessibilityIdentifier("tab.circles")
+                }
                 .tag(AppTab.circles)
 
             ProfileView()
-                .tabItem { Label("You", systemImage: "person.crop.circle") }
+                .tabItem {
+                    Label("You", systemImage: "person.crop.circle")
+                        .accessibilityIdentifier("tab.you")
+                }
                 .tag(AppTab.you)
         }
     }

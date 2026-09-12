@@ -31,6 +31,7 @@ struct BoardView: View {
                 }
                 .pickerStyle(.segmented)
                 .accessibilityLabel("Which board")
+                .accessibilityIdentifier("board.kind")
 
                 Picker("Period", selection: $period) {
                     Text("Today").tag(BoardPeriod.today)
@@ -43,6 +44,7 @@ struct BoardView: View {
                 // otherwise offer two periods that silently return the same rows.
                 .disabled(kind == .everyone)
                 .accessibilityLabel("Which period")
+                .accessibilityIdentifier("board.period")
 
                 if kind == .circle {
                     circleChips
@@ -100,6 +102,7 @@ struct BoardView: View {
                 Text(model.boardHeader(kind: .friends, scopeId: nil, period: period))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("board.header")
                 Spacer()
             }
         case .circle:
@@ -251,6 +254,7 @@ struct BoardView: View {
                         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.kithAccent))
                 }
                 .accessibilityLabel("Invite people to Kith")
+                .accessibilityIdentifier("board.empty.invite")
             }
 
             Button("Create a circle") {
@@ -259,6 +263,7 @@ struct BoardView: View {
             }
             .buttonStyle(SecondaryButtonStyle())
             .accessibilityLabel("Create a circle")
+            .accessibilityIdentifier("board.empty.createCircle")
 
             if model.contactsState == .limited {
                 HStack(spacing: 6) {
@@ -355,8 +360,11 @@ struct BoardRowView: View {
                     .offset(x: -12)
             }
         }
-        .accessibilityElement(children: .combine)
+        // `.contain` rather than `.combine`: the row keeps its own summary label, and the
+        // name inside it (notably "You") stays an addressable static text for UI tests.
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityText)
+        .accessibilityIdentifier("board.row.\(row.userId)")
     }
 
     private var accessibilityText: String {

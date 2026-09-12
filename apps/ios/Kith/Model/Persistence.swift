@@ -48,6 +48,17 @@ struct FileStore: Sendable {
         self.directory = folder
     }
 
+    /// A store rooted anywhere. `KithTests` and the `-uiTesting` launch point this at a
+    /// fresh directory under `FileManager.default.temporaryDirectory` so each run starts
+    /// with an empty cache and never touches the real one (TESTING.md §1).
+    init(directory: URL) {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        self.directory = directory
+    }
+
+    /// Where this store keeps its files. Tests assert on the queued-result file.
+    var root: URL { directory }
+
     private func url(for key: String) -> URL {
         directory.appendingPathComponent(key).appendingPathExtension("json")
     }

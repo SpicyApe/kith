@@ -32,12 +32,14 @@ struct ContactsPromptStep: View {
             }
             .buttonStyle(PrimaryButtonStyle())
             .accessibilityLabel("Find my friends using my contacts")
+            .accessibilityIdentifier("onboarding.contacts.allow")
 
             Button("Not now") {
                 model.declineContacts()
             }
             .buttonStyle(SecondaryButtonStyle())
             .accessibilityLabel("Skip contacts for now")
+            .accessibilityIdentifier("onboarding.contacts.notNow")
         }
         .padding(24)
     }

@@ -25,7 +25,10 @@ and the handful of API calls most likely to need a one-line fix.
 | `Config/AppConfig.swift` | Reads `Config.plist`; `print`s and exposes `isConfigured` when a key is missing. Also `pushEnvironment` (sandbox/production) and `appVersion`. |
 | `Config/Config.example.plist` | Template. |
 | `Model/AppModel.swift` | `@MainActor @Observable`. All state and all network calls. Also holds the small presentation helpers (`headerDate`, `clock`, `countdownText`) so views stay dumb. |
-| `Model/Session.swift` | `AuthSession`: supabase-swift OTP sign-in + `AuthTokenProvider`. |
+| `Model/AuthProviding.swift` | The auth seam `AppModel` depends on (refines `KithCore.AuthTokenProvider`). `AuthSession` and `FakeAuth` conform. |
+| `Model/Session.swift` | `AuthSession`: supabase-swift OTP sign-in + `AuthProviding`. |
+| `Testing/FakeKithAPI.swift` | `#if DEBUG`. In-memory `KithAPI` with recorded `calls`, three starting states, and `LineupEngine`-recomputed submissions. |
+| `Testing/FakeAuth.swift` | `#if DEBUG`. `AuthProviding` that accepts code `123456` and hands back an unsigned JWT for `u-me`. |
 | `Model/URLSessionHTTPClient.swift` | `HTTPClient` over `URLSession.shared`, 20 s per-request timeout. |
 | `Model/Persistence.swift` | `FileStore`, a JSON file cache in Application Support. `QueuedResult`, `Timestamp`, `StoreKey`. |
 | `Services/ContactsService.swift` | `CNContactStore` reads + the whole sync (`ContactDirectory` → `ContactSyncPlanner` → `api.matchContacts`). |
@@ -41,6 +44,78 @@ and the handful of API calls most likely to need a one-line fix.
 | `Views/Profile/ProfileView.swift` | Header, `HeatmapView`, `StatsGrid`, invite code, settings, delete account. |
 | `Views/Shared/*.swift` | `Theme` (accent colour, card, button styles), `AvatarView`, `MovementChip`, `MiniGrid` + `AttemptGrid`, `Toast`. |
 | `Resources/Assets.xcassets` | `AccentColor` (#E4593F light, #F0745C dark) and an empty 1024 `AppIcon` slot. |
+
+## Testing
+
+The contract is **[`apps/ios/TESTING.md`](../TESTING.md)** — §1 the seam, §2 the fakes, §3
+the accessibility identifiers `KithUITests` queries, §4 the in-process `KithTests`, §5 the
+simulator tests, §6 CI. Read it before touching anything below.
+
+How it hangs together:
+
+- `AppModel.init(auth:api:store:)` takes `any AuthProviding`, `any KithAPI` and a
+  `FileStore`. Nothing else constructs dependencies, so both test bundles inject fakes.
+- `KithApp.makeModel()` picks the wiring: `-uiTesting` (plus `-uiTestingState fresh |
+  returning | played`) → `FakeAuth` + `FakeKithAPI` + a `FileStore` rooted in a fresh
+  `temporaryDirectory/<uuid>`; otherwise the real Supabase stack. `#if DEBUG` only.
+- `-uiTesting` also renders the ▲/▼ pair on each unlocked tile
+  (`today.tile.<i>.up` / `.down`) and drops the tile `List` out of edit mode, because a
+  `Button` inside an editing row does not reliably take a tap. Every tile carries the
+  "Move up" / "Move down" accessibility actions in **all** builds.
+- Run them: `xcodebuild test -scheme Kith -destination 'platform=iOS Simulator,name=iPhone 16'`,
+  or ⌘U in Xcode. `swift test` in `packages/KithCore` and `packages/LineupEngine` covers
+  the two packages and is unaffected by any of this.
+
+Where the fake had to go past TESTING.md §2 (all deliberate, all documented in the file):
+
+- **A fourth friend, `Jo` (`u-jo`), who has not played.** §5.3 asserts the header reads
+  "3 of 4 friends played today", which needs four non-me rows with three played; the table
+  in §2 only names three. The friends board is therefore Mum, Sam, Dev, Jo and me — and
+  `KithTests` §4.3 asserts *four friend rows*, not four rows in total.
+- **Two seeded reactions in `played`, not one.** §2 lists "Sam → me 🔥"; §4.7 needs an
+  existing reaction **from me to Sam** for the swap to unreact first. Both rows are seeded.
+- **`myCircles()` starts empty.** §2 describes the `Family` circle as having me as a
+  member, but §2 also says `joinCircle` "adds a chip", and §5.5 joins it. Joining creates
+  the membership.
+- **My own rank in `played` is 3, same as Dev's**, exactly as §2 spells both out. Nothing
+  validates rank uniqueness; the fake does not renumber.
+- **The fake's "today" is UTC** (`LocalDay.date(Date(), tz: "UTC")`, per §2) while
+  `AppModel.today` uses the device zone. Identical on CI (UTC runners) and on any UTC
+  simulator; on a machine set to, say, `America/Los_Angeles` the `played` state can look
+  unplayed after 17:00 local. Set the simulator to UTC if you run the suites by hand.
+
+### Where I'd look first if the test targets don't compile
+
+Same honest list as below, scoped to the new code (no Swift toolchain on the authoring
+machine, so none of this has seen a compiler).
+
+1. **`#if DEBUG` inside view code.** `TileRow.moveButtons` is declared twice — once under
+   `#if DEBUG` as an `@ViewBuilder`, once under `#else` returning `EmptyView` — to keep the
+   preprocessor out of the `HStack` result builder. If the `#else` branch's opaque return
+   type upsets the compiler, give it `@ViewBuilder` too.
+2. **`@State private var model = KithApp.makeModel()`.** Same main-actor-isolated default
+   value as the old `AppModel()`; if `@main` plus `@MainActor` is a problem, `makeModel`
+   has to become `nonisolated` along with `AppModel.init`.
+3. **`FakeKithAPI`'s JSON round-trip.** KithCore's wire structs are `public` with no
+   `public init`, so their memberwise initializers are internal to that module and the
+   fake builds each one by encoding a local seed struct with identical field names and
+   decoding the real type (`convert(_:to:)`). Any field-name drift surfaces at runtime as
+   `KithError.decoding`, not at compile time — that is the single most likely failure.
+4. **`NSLock` + `@unchecked Sendable` on the fakes.** Every method takes the lock exactly
+   once; `NSLock` is not recursive, so a helper that re-locks would deadlock. If you add a
+   method, do not call another public method of the fake from inside it.
+5. **`.accessibilityIdentifier` on `Picker` and on `tabItem`'s `Label`.** Both are placed
+   where §3 says (on the `Picker` itself, on each tab's label view); if XCUITest cannot see
+   `board.kind` / `tab.today`, that is where to look, not in the test.
+6. **`BoardRowView` uses `.accessibilityElement(children: .contain)`** where it used
+   `.combine`, so the row carries `board.row.<userId>` *and* the inner "You" text stays
+   queryable. VoiceOver still reads the row's own summary label first.
+7. **`TileRow`'s accessibility label is now the item label alone** (§3), with the position
+   and state moved to `.accessibilityValue`.
+8. **`ContactsService.sync` gained an overload** taking `contacts:` and `isLimited:`. The
+   old signature is unchanged and now just calls the new one, so the production path is
+   the same code; the unit test drives the overload because a simulator has no contacts
+   permission.
 
 ## Deviations from PLAN.md (and why)
 

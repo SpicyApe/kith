@@ -87,6 +87,7 @@ struct TodayView: View {
             Text(engine.puzzle.prompt)
                 .font(.title2.weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("today.prompt")
             Text(engine.puzzle.direction)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -117,6 +118,7 @@ struct TodayView: View {
         .buttonStyle(PrimaryButtonStyle(enabled: engine.canSubmit && !isFinishing))
         .disabled(!engine.canSubmit || isFinishing)
         .accessibilityLabel("Lock in this order")
+        .accessibilityIdentifier("today.lockIn")
     }
 
     private func triesDots(used: Int) -> some View {
@@ -130,6 +132,7 @@ struct TodayView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(LineupEngine.maxTries - used) of \(LineupEngine.maxTries) tries left")
+        .accessibilityIdentifier("today.tries")
     }
 
     private var timerLabel: some View {
@@ -138,6 +141,7 @@ struct TodayView: View {
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("Elapsed time \(AppModel.clock(model.elapsedMs))")
+                .accessibilityIdentifier("today.timer")
         }
     }
 
@@ -193,16 +197,22 @@ struct TodayView: View {
                 }
                 .kithCard()
                 .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("today.playedCard")
             } else {
+                // Same identifier on the fallback: a fresh launch in the `played` state
+                // has a server-side result but no local one, so `resultsSummary` is nil
+                // and this is what the played screen actually shows.
                 Text("You've played today.")
                     .font(.title3.weight(.semibold))
                     .kithCard()
+                    .accessibilityIdentifier("today.playedCard")
             }
 
             TimelineView(.periodic(from: .now, by: 60)) { _ in
                 Text("Next puzzle in \(model.countdownText)")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("today.countdown")
             }
 
             let friendRows = Array(model.rows(kind: .friends, scopeId: nil, period: .today).prefix(3))

@@ -32,6 +32,7 @@ struct NameStep: View {
                     .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .focused($focused)
                     .accessibilityLabel("Display name")
+                    .accessibilityIdentifier("onboarding.name.field")
             }
 
             Button("Continue") {
@@ -40,6 +41,7 @@ struct NameStep: View {
             .buttonStyle(PrimaryButtonStyle(enabled: canContinue))
             .disabled(!canContinue)
             .accessibilityLabel("Continue with this name")
+            .accessibilityIdentifier("onboarding.name.continue")
 
             Spacer(minLength: 0)
         }

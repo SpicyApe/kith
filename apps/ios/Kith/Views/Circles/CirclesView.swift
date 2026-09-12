@@ -36,8 +36,10 @@ struct CirclesView: View {
                 Section {
                     Button("Create a circle") { model.showCreateCircleSheet = true }
                         .accessibilityLabel("Create a circle")
+                        .accessibilityIdentifier("circles.new")
                     Button("Join with a code") { model.showJoinSheet = true }
                         .accessibilityLabel("Join a circle with a code")
+                        .accessibilityIdentifier("circles.join")
                 }
             }
             .navigationTitle("Circles")
@@ -106,6 +108,8 @@ struct CirclesView: View {
             }
         }
         .padding(.vertical, 4)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("circles.chip.\(circle.code)")
     }
 
     // MARK: Sheets
@@ -145,6 +149,7 @@ struct CirclesView: View {
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
                     .accessibilityLabel("Circle join code")
+                    .accessibilityIdentifier("circles.join.field")
             }
             .navigationTitle("Join a circle")
             .navigationBarTitleDisplayMode(.inline)
@@ -161,6 +166,7 @@ struct CirclesView: View {
                         Task { await model.joinCircle(code: code) }
                     }
                     .disabled(joinCode.trimmingCharacters(in: .whitespaces).isEmpty || model.isBusy)
+                    .accessibilityIdentifier("circles.join.submit")
                 }
             }
             .onAppear {

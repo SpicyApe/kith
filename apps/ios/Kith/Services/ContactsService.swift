@@ -123,6 +123,16 @@ enum ContactsService {
     /// the caller only persists `syncedHashes` when this returns.
     static func sync(api: any KithAPI, lastSynced: Set<String>?) async throws -> ContactSyncOutcome {
         let contacts = await fetchAll()
+        let isLimited = authorizationState() == .limited
+        return try await sync(api: api, lastSynced: lastSynced, contacts: contacts, isLimited: isLimited)
+    }
+
+    /// The half of `sync` that never touches `CNContactStore`: normalise, plan, upload.
+    /// The address-book read and the authorization check are the caller's, which is what
+    /// lets `KithTests` exercise the limited-access rule on a simulator with no contacts
+    /// permission (TESTING.md §4.12).
+    static func sync(api: any KithAPI, lastSynced: Set<String>?,
+                     contacts: [RawContact], isLimited: Bool) async throws -> ContactSyncOutcome {
         let directory = ContactDirectory.build(
             from: contacts,
             normalizer: BasicPhoneNormalizer(),
@@ -143,8 +153,6 @@ enum ContactsService {
         // Limited access (iOS 18) only ever shows the contacts the user picked, so a
         // hash that is missing from this fetch has not necessarily left the address
         // book. Never send removals and never claim a full sync from a partial view.
-        let isLimited = authorizationState() == .limited
-
         let response = try await api.matchContacts(
             added: plan.added,
             removed: isLimited ? [] : plan.removed,

@@ -53,7 +53,7 @@ struct BoardCacheKey: Hashable, Sendable {
 @Observable
 final class AppModel {
     // Dependencies
-    let auth: AuthSession
+    let auth: any AuthProviding
     let api: any KithAPI
     private let store: FileStore
     private let midnight = MidnightTimer()
@@ -128,7 +128,7 @@ final class AppModel {
 
     // MARK: Init
 
-    init(auth: AuthSession, api: any KithAPI, store: FileStore = .shared) {
+    init(auth: any AuthProviding, api: any KithAPI, store: FileStore = .shared) {
         self.auth = auth
         self.api = api
         self.store = store
@@ -164,7 +164,7 @@ final class AppModel {
             onboarding = OnboardingFlow()
             return
         }
-        myUserId = await auth.userId() ?? ""
+        myUserId = await auth.currentUserId() ?? ""
 
         do {
             let loaded = try await api.profile()
@@ -345,9 +345,25 @@ final class AppModel {
     private func startMidnightTimer() {
         midnight.start(tz: tz) { [weak self] in
             guard let self else { return }
-            Task { await self.rollOverToNewDay() }
+            Task { await self.applyMidnight() }
         }
     }
+
+    /// What the midnight timer runs. Named separately from `rollOverToNewDay` so tests
+    /// can drive the flip without waiting on a real timer (TESTING.md §4.14).
+    func applyMidnight() async {
+        await rollOverToNewDay()
+    }
+
+    /// The one offline submission waiting to be replayed, read straight off disk.
+    /// `store` is private, so this is the seam `KithTests` uses instead of guessing the
+    /// file path (TESTING.md §4.5).
+    var queuedResult: QueuedResult? {
+        store.load(QueuedResult.self, key: StoreKey.queuedResult)
+    }
+
+    /// Directory `store` writes into, so a test can assert the queue file really landed.
+    var storeRoot: URL { store.root }
 
     // MARK: - Playing
 
@@ -734,7 +750,7 @@ final class AppModel {
         isBusy = true
         defer { isBusy = false }
         do {
-            try await auth.sendCode(to: phone)
+            try await auth.sendCode(phone: phone)
             onboarding.apply(.phoneEntered(phone))
             resendAvailableAt = Date().addingTimeInterval(30)
             codeDraft = ""
@@ -748,7 +764,7 @@ final class AppModel {
         isBusy = true
         defer { isBusy = false }
         do {
-            try await auth.sendCode(to: phoneDraft)
+            try await auth.sendCode(phone: phoneDraft)
             self.resendAvailableAt = Date().addingTimeInterval(30)
             show(toast: "Code sent.", isError: false)
         } catch {

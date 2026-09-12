@@ -32,6 +32,7 @@ struct NotificationsPromptStep: View {
             }
             .buttonStyle(PrimaryButtonStyle())
             .accessibilityLabel("Yes, remind me at \(model.notificationTime)")
+            .accessibilityIdentifier("onboarding.notifications.yes")
 
             Button("Change the time") { showTimePicker = true }
                 .font(.subheadline)
@@ -41,6 +42,7 @@ struct NotificationsPromptStep: View {
             Button("No thanks") { model.tail = .none }
                 .buttonStyle(SecondaryButtonStyle())
                 .accessibilityLabel("No notifications")
+                .accessibilityIdentifier("onboarding.notifications.no")
         }
         .padding(24)
         .background(Color(.systemBackground))

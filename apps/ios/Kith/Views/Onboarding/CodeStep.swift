@@ -35,6 +35,7 @@ struct CodeStep: View {
                     .focused($focused)
                     .opacity(0.02)
                     .accessibilityLabel("Six digit code")
+                    .accessibilityIdentifier("onboarding.code.field")
 
                 HStack(spacing: 10) {
                     ForEach(0..<6, id: \.self) { index in
@@ -55,6 +56,7 @@ struct CodeStep: View {
                     }
                     .disabled(!canResend)
                     .accessibilityLabel("Resend code")
+                    .accessibilityIdentifier("onboarding.code.resend")
 
                     Spacer()
 

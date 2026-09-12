@@ -19,6 +19,7 @@ struct ToastView: View {
             )
             .padding(.horizontal, 24)
             .accessibilityAddTraits(.isStaticText)
+            .accessibilityIdentifier("toast")
     }
 }
 

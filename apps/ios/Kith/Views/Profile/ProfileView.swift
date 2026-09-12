@@ -19,6 +19,7 @@ struct ProfileView: View {
                 Section("Last 8 weeks") {
                     HeatmapView(cells: model.heatmap)
                         .padding(.vertical, 4)
+                        .accessibilityIdentifier("profile.heatmap")
                 }
 
                 Section("Stats") {
@@ -29,8 +30,13 @@ struct ProfileView: View {
                 if let profile = model.profile {
                     Section("Your code") {
                         HStack {
+                            // The visible text keeps the "KITH-" prefix people type, but
+                            // the accessibility label is the raw code the API returned,
+                            // which is what KithUITests matches on.
                             Text("KITH-\(profile.invite_code)")
                                 .font(.body.monospaced())
+                                .accessibilityLabel("Invite code \(profile.invite_code)")
+                                .accessibilityIdentifier("profile.inviteCode")
                             Spacer()
                             ShareLink(item: inviteText(profile.invite_code)) {
                                 Text("Share")
@@ -67,6 +73,7 @@ struct ProfileView: View {
                 Button("Delete everything", role: .destructive) {
                     Task { await model.deleteAccount() }
                 }
+                .accessibilityIdentifier("profile.deleteConfirm")
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("""
@@ -97,6 +104,7 @@ struct ProfileView: View {
             Text("🔥 \(model.streak)")
                 .font(.headline.monospacedDigit())
                 .accessibilityLabel("Current streak \(model.streak) days")
+                .accessibilityIdentifier("profile.streak")
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .contain)
@@ -174,6 +182,7 @@ struct ProfileView: View {
                         set: { value in Task { await model.updateProfile(ProfilePatch(discoverable: value)) } }
                     ))
                     .accessibilityLabel("Let contacts find me")
+                    .accessibilityIdentifier("profile.discoverable")
                     Text("Off means you never appear in anyone's matches and your hashes are deleted.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -227,6 +236,7 @@ struct ProfileView: View {
                 model.showDeleteConfirm = true
             }
             .accessibilityLabel("Delete my account")
+            .accessibilityIdentifier("profile.deleteAccount")
         }
     }
 

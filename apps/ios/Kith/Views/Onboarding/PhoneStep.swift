@@ -33,6 +33,7 @@ struct PhoneStep: View {
                 .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .focused($focused)
                 .accessibilityLabel("Phone number, including country code")
+                .accessibilityIdentifier("onboarding.phone.field")
 
             Button("Continue") {
                 Task { await model.sendCode() }
@@ -40,6 +41,7 @@ struct PhoneStep: View {
             .buttonStyle(PrimaryButtonStyle(enabled: !model.isBusy))
             .disabled(model.isBusy)
             .accessibilityLabel("Continue and send me a code")
+            .accessibilityIdentifier("onboarding.phone.continue")
 
             Text("We'll text you a code. Standard rates apply.")
                 .font(.footnote)

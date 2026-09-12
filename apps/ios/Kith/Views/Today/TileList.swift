@@ -35,6 +35,17 @@ struct TileList: View {
         return map
     }
 
+    /// Drag-to-reorder needs edit mode, but a `Button` inside an editing row does not
+    /// reliably receive taps, and the UI tests reorder with the ▲/▼ pair instead of
+    /// dragging (TESTING.md §1). So under `-uiTesting` the list leaves edit mode.
+    private var listEditMode: EditMode {
+        #if DEBUG
+        return UITesting.isActive ? .inactive : .active
+        #else
+        return .active
+        #endif
+    }
+
     var body: some View {
         let locked = engine.lockedPositions
         let names = labels
@@ -45,7 +56,11 @@ struct TileList: View {
                     label: names[itemId] ?? "",
                     position: index,
                     isLocked: locked.contains(index),
-                    isNear: nearPositions.contains(index)
+                    isNear: nearPositions.contains(index),
+                    // SwiftUI's `.onMove` coordinates are "insert before", so one step
+                    // down is `position + 2` and one step up is `position - 1`.
+                    onMoveUp: { onMove(IndexSet(integer: index), index - 1) },
+                    onMoveDown: { onMove(IndexSet(integer: index), index + 2) }
                 )
                 .moveDisabled(locked.contains(index))
                 .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
@@ -56,7 +71,7 @@ struct TileList: View {
         }
         .listStyle(.plain)
         .scrollDisabled(true)
-        .environment(\.editMode, .constant(.active))
+        .environment(\.editMode, .constant(listEditMode))
         .accessibilityLabel("Puzzle tiles. Drag to reorder.")
     }
 }
@@ -67,6 +82,8 @@ private struct TileRow: View {
     let position: Int
     let isLocked: Bool
     let isNear: Bool
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
 
     @State private var pulsing = false
 
@@ -82,6 +99,21 @@ private struct TileRow: View {
     }
 
     var body: some View {
+        // The tile itself is one combined accessibility element; the ▲/▼ pair sits
+        // outside it so each button stays separately addressable.
+        HStack(spacing: 8) {
+            tile
+            moveButtons
+        }
+        .task(id: isNear) {
+            guard isNear else { return }
+            pulsing = true
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            pulsing = false
+        }
+    }
+
+    private var tile: some View {
         HStack(spacing: 12) {
             Text("\(position + 1)")
                 .font(.footnote.monospacedDigit())
@@ -110,12 +142,44 @@ private struct TileRow: View {
         .background(background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .animation(.easeInOut(duration: 0.25), value: background)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Position \(position + 1): \(label), \(stateDescription)")
-        .task(id: isNear) {
-            guard isNear else { return }
-            pulsing = true
-            try? await Task.sleep(nanoseconds: 600_000_000)
-            pulsing = false
+        // TESTING.md §3 pins the label to the item label; position and state ride along
+        // as the value, so VoiceOver still reads "Telephone, position 1, not placed yet".
+        .accessibilityLabel(label)
+        .accessibilityValue("position \(position + 1), \(stateDescription)")
+        .accessibilityIdentifier("today.tile.\(position)")
+        // Always available, `-uiTesting` or not: dragging is hard work with VoiceOver.
+        .accessibilityAction(named: "Move up") { onMoveUp() }
+        .accessibilityAction(named: "Move down") { onMoveDown() }
+    }
+
+    // `#if` sits at declaration level rather than inside the `HStack` builder, so the
+    // result builder only ever sees plain Swift.
+    #if DEBUG
+    /// The deterministic reorder affordance for `KithUITests`. Never rendered outside
+    /// `-uiTesting`, and never on a locked tile (TESTING.md §1).
+    @ViewBuilder
+    private var moveButtons: some View {
+        if UITesting.isActive, !isLocked {
+            moveButton(systemImage: "chevron.up", suffix: "up",
+                       label: "Move tile \(position + 1) up", action: onMoveUp)
+            moveButton(systemImage: "chevron.down", suffix: "down",
+                       label: "Move tile \(position + 1) down", action: onMoveDown)
         }
     }
+
+    private func moveButton(systemImage: String, suffix: String,
+                            label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.footnote.weight(.semibold))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier("today.tile.\(position).\(suffix)")
+    }
+    #else
+    private var moveButtons: some View { EmptyView() }
+    #endif
 }

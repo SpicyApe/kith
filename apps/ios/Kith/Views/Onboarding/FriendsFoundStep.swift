@@ -57,6 +57,7 @@ struct FriendsFoundStep: View {
             }
             .buttonStyle(PrimaryButtonStyle())
             .accessibilityLabel("See the board")
+            .accessibilityIdentifier("onboarding.friends.seeBoard")
         }
     }
 
@@ -82,6 +83,7 @@ struct FriendsFoundStep: View {
                     )
             }
             .accessibilityLabel("Invite the group chat")
+            .accessibilityIdentifier("onboarding.friends.invite")
 
             Button("Create a circle") {
                 model.showCreateCircleSheet = true
@@ -90,6 +92,7 @@ struct FriendsFoundStep: View {
             }
             .buttonStyle(SecondaryButtonStyle())
             .accessibilityLabel("Create a circle")
+            .accessibilityIdentifier("onboarding.friends.createCircle")
 
             Button("Have a code?") {
                 model.showJoinSheet = true

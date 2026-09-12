@@ -73,17 +73,22 @@ struct ResultsView: View {
             Text(summary.headline)
                 .font(.largeTitle.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("results.headline")
+            // Score and time are labelled individually rather than collapsed into one
+            // element, so `results.score` and `results.time` are both addressable.
             HStack(alignment: .firstTextBaseline, spacing: 16) {
                 Text("\(summary.score)")
                     .font(.system(size: 52, weight: .bold, design: .rounded))
                     .monospacedDigit()
+                    .accessibilityLabel("Score \(summary.score)")
+                    .accessibilityIdentifier("results.score")
                 Text(summary.timeText)
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
+                    .accessibilityLabel("Time \(summary.timeText)")
+                    .accessibilityIdentifier("results.time")
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Score \(summary.score), time \(summary.timeText)")
         }
     }
 
@@ -105,6 +110,7 @@ struct ResultsView: View {
                     }
                     .font(.subheadline)
                     .accessibilityLabel(showFacts ? "Hide the rest of the order" : "Show the whole order and its facts")
+                    .accessibilityIdentifier("results.showFacts")
                 }
             }
 
@@ -169,6 +175,7 @@ struct ResultsView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(teaser). Open the board.")
+            .accessibilityIdentifier("results.rankTeaser")
         }
     }
 
@@ -184,6 +191,7 @@ struct ResultsView: View {
                 .padding(12)
                 .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .accessibilityLabel("Taunt, optional, 80 characters")
+                .accessibilityIdentifier("results.taunt.field")
                 .onChange(of: text.wrappedValue) { _, newValue in
                     if newValue.count > 80 {
                         text.wrappedValue = String(newValue.prefix(80))
@@ -218,6 +226,7 @@ struct ResultsView: View {
                 model.markShared()
             })
             .accessibilityLabel("Share your result")
+            .accessibilityIdentifier("results.share")
 
             Button("Copy") {
                 UIPasteboard.general.string = summary.shareText
@@ -225,6 +234,7 @@ struct ResultsView: View {
             }
             .buttonStyle(SecondaryButtonStyle())
             .accessibilityLabel("Copy your result to the clipboard")
+            .accessibilityIdentifier("results.copy")
         }
     }
 
