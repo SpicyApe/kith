@@ -206,10 +206,14 @@ import XCTest
 
         // MARK: Step 6 — delete the account
 
-        let deleteAccount = awaitElement(app.buttons["profile.deleteAccount"],
-                                         "Step 6: profile.deleteAccount never appeared")
-        // It sits at the very bottom of a scrolling profile; scroll it into reach rather
-        // than tapping a point that is off screen.
+        // It sits at the very bottom of a lazily rendered profile list, so it may not even
+        // exist in the accessibility tree until scrolled into view: swipe first, then wait.
+        let deleteAccount = element("profile.deleteAccount")
+        for _ in 0..<6 where !deleteAccount.exists {
+            app.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+        awaitElement(deleteAccount, "Step 6: profile.deleteAccount never appeared after scrolling")
         for _ in 0..<3 where !deleteAccount.isHittable {
             app.swipeUp()
         }
