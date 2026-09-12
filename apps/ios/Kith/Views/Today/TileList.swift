@@ -37,10 +37,11 @@ struct TileList: View {
 
     /// Drag-to-reorder needs edit mode, but a `Button` inside an editing row does not
     /// reliably receive taps, and the UI tests reorder with the ▲/▼ pair instead of
-    /// dragging (TESTING.md §1). So under `-uiTesting` the list leaves edit mode.
+    /// dragging (TESTING.md §1). So whenever the test controls are on — `-uiTesting`
+    /// or `-uiTestingControls` (§7) — the list leaves edit mode.
     private var listEditMode: EditMode {
         #if DEBUG
-        return UITesting.isActive ? .inactive : .active
+        return UITesting.controlsActive ? .inactive : .active
         #else
         return .active
         #endif
@@ -155,11 +156,12 @@ private struct TileRow: View {
     // `#if` sits at declaration level rather than inside the `HStack` builder, so the
     // result builder only ever sees plain Swift.
     #if DEBUG
-    /// The deterministic reorder affordance for `KithUITests`. Never rendered outside
-    /// `-uiTesting`, and never on a locked tile (TESTING.md §1).
+    /// The deterministic reorder affordance for `KithUITests` and `KithLiveTests`.
+    /// Never rendered outside `-uiTesting` / `-uiTestingControls`, and never on a
+    /// locked tile (TESTING.md §1, §7).
     @ViewBuilder
     private var moveButtons: some View {
-        if UITesting.isActive, !isLocked {
+        if UITesting.controlsActive, !isLocked {
             moveButton(systemImage: "chevron.up", suffix: "up",
                        label: "Move tile \(position + 1) up", action: onMoveUp)
             moveButton(systemImage: "chevron.down", suffix: "down",

@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      live:
+        description: Run the live end-to-end test against the real backend
+        type: boolean
+        default: false
 
 env:
   XCODE_SELECT: sudo xcode-select -s /Applications/Xcode_16.2.app || sudo xcode-select -s /Applications/Xcode_16.1.app || sudo xcode-select -s /Applications/Xcode_16.app
@@ -72,6 +77,67 @@ jobs:
         with:
           name: TestResults.xcresult
           path: apps/ios/TestResults.xcresult
+
+  live-e2e:
+    name: Live end-to-end (real backend)
+    runs-on: macos-14
+    needs: simulator-tests
+    if: ${{ vars.KITH_LIVE_E2E == 'true' || inputs.live == true }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Select Xcode
+        run: ${{ env.XCODE_SELECT }}
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Write Config.plist from secrets
+        working-directory: apps/ios
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "SUPABASE_URL / SUPABASE_ANON_KEY secrets are required for the live test"; exit 1
+          fi
+          cp Kith/Config/Config.example.plist Kith/Config/Config.plist
+          /usr/libexec/PlistBuddy -c "Set :SUPABASE_URL $SUPABASE_URL" Kith/Config/Config.plist
+          /usr/libexec/PlistBuddy -c "Set :SUPABASE_ANON_KEY $SUPABASE_ANON_KEY" Kith/Config/Config.plist
+      - name: Generate project
+        working-directory: apps/ios
+        run: xcodegen generate
+      - name: Pick a simulator
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available --json | jq -r '
+            .devices | to_entries
+            | map(select(.key | contains("iOS")))
+            | sort_by(.key) | reverse
+            | map(.value[] | select(.isAvailable and (.name | startswith("iPhone"))))
+            | .[0].udid // empty')
+          [ -n "$udid" ] || { echo "No available iPhone simulator"; exit 1; }
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+      - name: Live test
+        working-directory: apps/ios
+        env:
+          TEST_RUNNER_KITH_TEST_PHONE: ${{ secrets.KITH_TEST_PHONE }}
+          TEST_RUNNER_KITH_TEST_OTP: ${{ secrets.KITH_TEST_OTP }}
+        run: |
+          xcodebuild test -project Kith.xcodeproj -scheme KithLive \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -resultBundlePath LiveResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -quiet
+      - name: Live test failure details
+        if: failure()
+        working-directory: apps/ios
+        run: |
+          xcrun xcresulttool get test-results summary --path LiveResults.xcresult > summary.json || true
+          jq -r '.testFailures[]? | "\(.testName): \(.failureText)"' summary.json || cat summary.json | head -100
+      - name: Upload live results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveResults.xcresult
+          path: apps/ios/LiveResults.xcresult
+          if-no-files-found: ignore
 
   app:
     name: Unsigned IPA

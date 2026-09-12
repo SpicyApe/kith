@@ -105,3 +105,40 @@ Method names above are the intent; match whatever `AppModel` actually exposes an
 
 - `.github/workflows/backend.yml` (ubuntu): `deno check` + `deno test --allow-read` in `supabase/functions`; `npm install && npm test` in `supabase/tests`.
 - `.github/workflows/ios.yml`: jobs `packages` (swift test ×2), `simulator-tests` (`xcodebuild test` on the `Kith` scheme, iPhone 16 simulator, uploads the `.xcresult` on failure), and `app` (unsigned IPA) which needs both.
+
+## 7. Live end-to-end test (`KithLiveTests`, real backend)
+
+Separate UI-test target and scheme (`KithLive`) so the hermetic suites above never
+touch the network. Launches the app WITHOUT `-uiTesting`, so it uses the real
+`Config.plist` (live Supabase project), with `-uiTestingControls` to render the per-tile
+▲/▼ buttons without swapping the backend.
+
+Inputs (test-runner environment, passed by xcodebuild as `TEST_RUNNER_*`):
+`KITH_TEST_PHONE` (an E.164 number registered under Supabase Auth → Phone → Test Phone
+Numbers) and `KITH_TEST_OTP` (its fixed code). If either is missing the test is skipped
+with `XCTSkip`, never failed.
+
+`testLiveSignInPlayAndDelete`, one test, in this order, every wait 20 s:
+1. Launch. If `onboarding.phone.field` exists: type the phone → `onboarding.phone.continue`
+   → type the OTP into `onboarding.code.field` (auto-submits). Then EITHER
+   `onboarding.name.field` (new user: type `CI Tester`, tap `onboarding.name.continue`, then
+   `onboarding.contacts.notNow`) OR the Today screen directly (returning user).
+2. Today: if `today.playedCard` exists, skip to step 4. Otherwise, up to three rounds: tap the
+   first enabled button among `today.tile.0.down` … `today.tile.3.down`, then `today.lockIn`;
+   stop as soon as `results.headline` exists (solved or failed both end on the results screen).
+3. Results: `results.score` exists. If the onboarding tail appears (`onboarding.friends.seeBoard`
+   or `onboarding.friends.invite`, then `onboarding.notifications.no`), dismiss it: tap
+   `onboarding.friends.seeBoard` if present, then `onboarding.notifications.no` if present.
+4. `tab.board`: `board.header` exists and a row labelled `You` exists (or `board.row.<my id>`;
+   `You` is enough).
+5. `tab.you`: `profile.streak` exists and its label contains a digit; `profile.inviteCode` exists.
+6. Delete: `profile.deleteAccount` → `profile.deleteConfirm` → `onboarding.phone.field` appears
+   again (signed out). This leaves the backend clean for the next run.
+Assertion messages must say which step failed. Screenshots are attached at each step
+(`XCTAttachment(screenshot:)`, lifetime `.keepAlways`) so a failure is diagnosable from the
+`.xcresult`.
+
+CI: job `live-e2e` in `.github/workflows/ios.yml` runs only when the repository variable
+`KITH_LIVE_E2E` is `true` (or on manual dispatch with `live=true`), after `simulator-tests`,
+with `Config.plist` written from the `SUPABASE_URL`/`SUPABASE_ANON_KEY` secrets and the
+phone/OTP from the `KITH_TEST_PHONE`/`KITH_TEST_OTP` secrets.

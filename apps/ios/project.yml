@@ -109,7 +109,33 @@ targets:
         GENERATE_INFOPLIST_FILE: true
         TEST_TARGET_NAME: Kith
 
+  # Live end-to-end against the real backend. Not in the Kith scheme's test action;
+  # run via the KithLive scheme only (TESTING.md §7).
+  KithLiveTests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: KithLiveTests
+    dependencies:
+      - target: Kith
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.kith.ios.livetests
+        GENERATE_INFOPLIST_FILE: true
+        TEST_TARGET_NAME: Kith
+
 schemes:
+  KithLive:
+    build:
+      targets:
+        Kith: all
+        KithLiveTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - KithLiveTests
   Kith:
     build:
       targets:

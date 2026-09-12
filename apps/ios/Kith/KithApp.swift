@@ -10,6 +10,17 @@ enum UITesting {
     /// `app.launchArguments = ["-uiTesting", "-uiTestingState", "<state>"]`.
     static let isActive: Bool = ProcessInfo.processInfo.arguments.contains("-uiTesting")
 
+    /// True when the deterministic test *controls* should be rendered — today's ▲ / ▼
+    /// per-tile move buttons, and the matching "leave edit mode" behaviour in `TileList`.
+    ///
+    /// `-uiTesting` implies them, and additionally swaps the whole backend for the
+    /// in-memory fakes (§2). The live end-to-end suite (`KithLiveTests`, TESTING.md §7)
+    /// has to drive the *real* Supabase wiring, so it launches with `-uiTestingControls`
+    /// instead: same reorder affordance, no fakes. Nothing but `-uiTesting` may ever
+    /// select `FakeKithAPI`.
+    static let controlsActive: Bool = isActive
+        || ProcessInfo.processInfo.arguments.contains("-uiTestingControls")
+
     /// The value after `-uiTestingState`, or nil. Defaults to `fresh` at the call site.
     static let stateName: String? = {
         let arguments = ProcessInfo.processInfo.arguments
