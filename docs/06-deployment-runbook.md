@@ -12,7 +12,7 @@ the macOS steps run on GitHub Actions.
 3. Apply the schema. Either paste `supabase/migrations/0001_init.sql` into the SQL editor,
    or with the CLI: `supabase link --project-ref <ref>` then `supabase db push`.
    `pg_cron` must be enabled first: Database → Extensions → `pg_cron`, `pg_net`.
-4. Seed content: run `supabase/seed/content.sql` in the SQL editor. Lists are inserted
+4. Seed content: applied by `supabase db push` as migration 0003 (idempotent). Lists are inserted
    with `enabled = false`; enable each one only after checking its values against the
    source links (Admin page → Lists).
 5. Make yourself an admin. After you have signed up in the app once:

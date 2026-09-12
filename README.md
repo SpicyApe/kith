@@ -14,7 +14,7 @@ A daily puzzle app where the leaderboard is made of the contacts in your phone w
 | `packages/LineupEngine/Tests/LineupEngineTests/Fixtures/golden.json` | Golden vectors read by both test suites so the twins cannot drift | both of the above |
 | `supabase/migrations/0001_init.sql` | Schema, row-level security, board / streak / circle / push RPCs | `cd supabase/tests && npm install && npm test` (runs the migration in in-process Postgres with an `auth` shim and a non-superuser role) |
 | `supabase/migrations/0002_cron.sql` | pg_cron schedules for pushes and puzzle generation (hosted only) | — |
-| `supabase/seed/content.sql` | Seed lists and items, disabled until a human checks each value | schema test loads it |
+| `supabase/migrations/0003_seed_content.sql` | Seed lists and items, disabled until a human checks each value | schema test loads it |
 | `supabase/functions/{delete-account,send-pushes,generate-puzzles}/` | Account deletion, APNs pushes from cron, puzzle generator | `deno test --allow-read` |
 | `admin/index.html` | Single-file review queue for the content author | manual |
 | `web/` | Landing site, share/circle link fallbacks, privacy policy, terms, AASA (Cloudflare Pages) | manual |
