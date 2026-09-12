@@ -28,8 +28,9 @@ struct ProfileView: View {
                         .padding(.vertical, 4)
                 }
 
-                gamesSection
-
+                // The invite code stays above the per-game stats: it is the one row on this
+                // screen people act on (docs/02 §6 "find friends"), and keeping it in the
+                // first screenful is also what lets the UI tests find it without scrolling.
                 if let profile = model.profile {
                     Section("Your code") {
                         HStack {
@@ -48,6 +49,8 @@ struct ProfileView: View {
                         }
                     }
                 }
+
+                gamesSection
 
                 notificationsSection
                 contactsSection
