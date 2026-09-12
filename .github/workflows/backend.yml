@@ -1,0 +1,38 @@
+name: Backend
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  functions:
+    name: Edge functions (Deno)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Type-check entrypoints
+        working-directory: supabase/functions
+        run: deno check _shared/serve.ts register/index.ts submit-result/index.ts match-contacts/index.ts delete-account/index.ts send-pushes/index.ts generate-puzzles/index.ts
+      - name: Test
+        working-directory: supabase/functions
+        run: deno test --allow-read
+
+  schema:
+    name: Schema + RLS + seed (pglite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Install
+        working-directory: supabase/tests
+        run: npm install --no-audit --no-fund
+      - name: Schema check
+        working-directory: supabase/tests
+        run: npm test

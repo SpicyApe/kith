@@ -79,3 +79,50 @@ targets:
         # tab bar tint and the app icon actually resolve.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+  # In-process unit tests hosted by the app (AppModel + fakes). See TESTING.md §4.
+  KithTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: KithTests
+    dependencies:
+      - target: Kith
+      - package: LineupEngine
+      - package: KithCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.kith.ios.tests
+        GENERATE_INFOPLIST_FILE: true
+
+  # Simulator UI tests driving the real views against FakeKithAPI. See TESTING.md §5.
+  KithUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: KithUITests
+    dependencies:
+      - target: Kith
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.kith.ios.uitests
+        GENERATE_INFOPLIST_FILE: true
+        TEST_TARGET_NAME: Kith
+
+schemes:
+  Kith:
+    build:
+      targets:
+        Kith: all
+        KithTests: [test]
+        KithUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: true
+      targets:
+        - KithTests
+        - KithUITests
+    archive:
+      config: Release

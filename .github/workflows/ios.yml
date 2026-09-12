@@ -6,27 +6,65 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  XCODE_SELECT: sudo xcode-select -s /Applications/Xcode_16.2.app || sudo xcode-select -s /Applications/Xcode_16.1.app || sudo xcode-select -s /Applications/Xcode_16.app
+
 jobs:
   packages:
     name: Swift packages (macOS)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.2.app || sudo xcode-select -s /Applications/Xcode_16.1.app || sudo xcode-select -s /Applications/Xcode_16.app
+        run: ${{ env.XCODE_SELECT }}
       - name: LineupEngine tests
         run: swift test --package-path packages/LineupEngine
       - name: KithCore tests
         run: swift test --package-path packages/KithCore
 
+  simulator-tests:
+    name: App unit + UI tests (simulator)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+      - name: Select Xcode
+        run: ${{ env.XCODE_SELECT }}
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Write Config.plist (placeholders are fine for tests)
+        working-directory: apps/ios
+        run: cp Kith/Config/Config.example.plist Kith/Config/Config.plist
+      - name: Generate project
+        working-directory: apps/ios
+        run: xcodegen generate
+      - name: Pick a simulator
+        id: sim
+        run: |
+          name=$(xcrun simctl list devices available | grep -E "iPhone 1[5-7]( Pro)?( Max)? \(" | head -1 | sed -E 's/^ *([^(]+) \(.*/\1/')
+          echo "name=${name:-iPhone 16}" >> "$GITHUB_OUTPUT"
+          echo "Using simulator: ${name:-iPhone 16}"
+      - name: Test
+        working-directory: apps/ios
+        run: |
+          xcodebuild test -project Kith.xcodeproj -scheme Kith \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -quiet
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults.xcresult
+          path: apps/ios/TestResults.xcresult
+
   app:
     name: Unsigned IPA
     runs-on: macos-14
-    needs: packages
+    needs: [packages, simulator-tests]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.2.app || sudo xcode-select -s /Applications/Xcode_16.1.app || sudo xcode-select -s /Applications/Xcode_16.app
+        run: ${{ env.XCODE_SELECT }}
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Write Config.plist
