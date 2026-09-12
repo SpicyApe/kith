@@ -106,7 +106,17 @@ import XCTest
                 file: StaticString = #filePath,
                 line: UInt = #line) -> XCUIElement {
         let item = tab(identifier)
-        return awaitAndTap(item, "Tab \(identifier) never appeared", file: file, line: line)
+        awaitAndTap(item, "Tab \(identifier) never appeared", file: file, line: line)
+        // A tap that lands mid-animation can be dropped on a busy simulator; confirm the
+        // tab actually became selected and tap once more if it did not.
+        let selected = NSPredicate(format: "isSelected == true")
+        let became = XCTNSPredicateExpectation(predicate: selected, object: item)
+        if XCTWaiter().wait(for: [became], timeout: 3) != .completed {
+            item.tap()
+            let again = XCTNSPredicateExpectation(predicate: selected, object: item)
+            _ = XCTWaiter().wait(for: [again], timeout: 5)
+        }
+        return item
     }
 
     /// Taps a text field to focus it and types into it. The keyboard is dismissed later
