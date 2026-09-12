@@ -83,7 +83,7 @@ import XCTest
                     // stage/step/busy/last-error; reading it is race-free unlike the toast.
                     let status = element("debug.status")
                     if status.exists {
-                        XCTFail("Step 1: saving the name did not advance; app status: (status.label)")
+                        XCTFail("Step 1: saving the name did not advance; app status: \(status.label)")
                     }
                     step("1. retrying Continue on the name step")
                     app.buttons["onboarding.name.continue"].tap()
