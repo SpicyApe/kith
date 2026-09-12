@@ -10,6 +10,8 @@ import XCTest
     /// Every existence wait in the suite uses this. Simulator cold starts on CI are
     /// slower than a developer Mac, so it is deliberately generous. We never sleep.
     static let timeout: TimeInterval = 8
+    /// First lookup after launch: the simulator can take a while to reach the tabs on CI.
+    static let launchTimeout: TimeInterval = 25
 
     /// The app under test for the current test method. One launch per test keeps the
     /// tests independent: the fake backend and its `FileStore` are rebuilt each time.
@@ -50,10 +52,22 @@ import XCTest
     /// A tab-bar item. SwiftUI usually surfaces `TabView` items as `tabBars` buttons,
     /// but an identifier placed on the label rather than the item can land in the plain
     /// button query instead — so try both (per the task contract).
+    /// Tab bar buttons are matched by identifier first and by their visible title as a
+    /// fallback: SwiftUI does not always surface a `tabItem` label's identifier on the
+    /// UITabBar button, and which one XCUITest sees has proven flaky on CI simulators.
     func tab(_ identifier: String) -> XCUIElement {
-        let tabBarButton = app.tabBars.buttons[identifier]
-        if tabBarButton.waitForExistence(timeout: Self.timeout) {
-            return tabBarButton
+        let titles = ["tab.today": "Today", "tab.board": "Board", "tab.circles": "Circles", "tab.you": "You"]
+        let bar = app.tabBars.firstMatch
+        _ = bar.waitForExistence(timeout: Self.launchTimeout)
+        let byIdentifier = bar.buttons[identifier]
+        if byIdentifier.waitForExistence(timeout: 3) {
+            return byIdentifier
+        }
+        if let title = titles[identifier] {
+            let byTitle = bar.buttons[title]
+            if byTitle.waitForExistence(timeout: 3) {
+                return byTitle
+            }
         }
         return app.buttons[identifier]
     }
