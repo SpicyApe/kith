@@ -17,6 +17,14 @@ with two test numbers (the owner's and `+1 500 555 0006` for CI, code `123456`, 
 the machine that created the project. Still to do: real Twilio credentials before public
 users, APNs secrets for pushes, and the owner's `admins` row after their first sign-in.
 
+**Games hub (docs/07, deployed 2026-09-12):** migration 0006 applied, `submit-game` deployed,
+`generate-puzzles` redeployed; `daily_games` holds Stars, Duo and Trail for 30 days through
+2026-10-11. The grid-games fill pass is capped at 8 s per invocation because the edge runtime
+killed a longer pass with `WORKER_RESOURCE_LIMIT`; the nightly cron tops up three games a day,
+and a backfill is done by invoking the function repeatedly (cron-secret bearer + anon `apikey`)
+until `games.created` comes back empty. The admin page does not yet show `daily_games`;
+reseed one with `{"date":"YYYY-MM-DD","game":"stars"}` (409 `has_results` once anyone has played it).
+
 1. Create a project at supabase.com. Note the project URL, anon key, and service-role key.
 2. Enable phone auth: Authentication → Providers → Phone, with Twilio Verify credentials.
    Set OTP length 6, expiry 5 minutes.
