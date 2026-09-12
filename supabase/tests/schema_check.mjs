@@ -24,7 +24,8 @@ await db.exec(`
   create role service_role nologin;
 `);
 await db.exec(sql);
-console.log("migration: OK");
+await db.exec(fs.readFileSync(new URL("../migrations/0004_revoke_wrappers_from_anon.sql", import.meta.url), "utf8"));
+console.log("migration: OK (0001 + 0004)");
 
 const A = "11111111-1111-1111-1111-111111111111";
 const B = "22222222-2222-2222-2222-222222222222";
@@ -203,6 +204,12 @@ try {
 } catch (e) {
   console.log("anon board() correctly denied:", e.message.split("\n")[0]);
 }
+
+let anonStreakDenied = false;
+try {
+  await db.query(`select public.my_streak()`);
+} catch (e) { anonStreakDenied = true; console.log("anon my_streak() correctly denied:", e.message.split("\n")[0]); }
+if (!anonStreakDenied) throw new Error("anon must not be able to execute my_streak()");
 if (anonBoardRows > 0) throw new Error("RLS: anon must not see the everyone board");
 await db.exec(`reset role`);
 

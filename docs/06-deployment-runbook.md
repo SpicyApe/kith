@@ -6,6 +6,14 @@ the macOS steps run on GitHub Actions.
 
 ## 1. Supabase project
 
+**Current project (created 2026-09-12):** ref `guesfztufvxeqylyjvyi`, region us-east-1,
+URL `https://guesfztufvxeqylyjvyi.supabase.co`, dashboard
+https://supabase.com/dashboard/project/guesfztufvxeqylyjvyi. Migrations 0001–0003 are
+applied, `CONTACT_PEPPER` is set, all six functions are deployed, and the GitHub secrets
+`SUPABASE_URL` / `SUPABASE_ANON_KEY` are set. The database password and pepper are in
+`~/.kith/` on the machine that created the project. Still to do in the dashboard: steps
+2 (phone provider or test OTP) and 8 (Vault secrets, then `select public.schedule_background_jobs();`).
+
 1. Create a project at supabase.com. Note the project URL, anon key, and service-role key.
 2. Enable phone auth: Authentication → Providers → Phone, with Twilio Verify credentials.
    Set OTP length 6, expiry 5 minutes.
