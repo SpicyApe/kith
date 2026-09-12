@@ -138,7 +138,18 @@ import XCTest
                       timeout: TimeInterval = KithLiveTestCase.timeout,
                       file: StaticString = #filePath,
                       line: UInt = #line) -> XCUIElement {
-        XCTAssertTrue(element.waitForExistence(timeout: timeout), message, file: file, line: line)
+        if !element.waitForExistence(timeout: timeout) {
+            // Include the on-screen accessibility tree so a CI failure is diagnosable from
+            // the printed summary alone (screenshots need Apple tooling to open).
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = "failure: " + message
+            shot.lifetime = .keepAlways
+            add(shot)
+            let tree = String(app.debugDescription.prefix(3000))
+            XCTFail(message + "
+--- screen at failure ---
+" + tree, file: file, line: line)
+        }
         return element
     }
 
