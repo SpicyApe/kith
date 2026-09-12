@@ -59,7 +59,7 @@ struct RootView: View {
 
     #if DEBUG
     private var debugStatus: String {
-        "stage=(String(describing: model.stage)) step=(String(describing: model.onboarding.step)) busy=(model.isBusy) tail=(String(describing: model.tail)) error=(model.lastErrorMessage ?? "none")"
+        "stage=\(String(describing: model.stage)) step=\(String(describing: model.onboarding.step)) busy=\(model.isBusy) tail=\(String(describing: model.tail)) error=\(model.lastErrorMessage ?? "none")"
     }
     #endif
 
