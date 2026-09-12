@@ -192,6 +192,14 @@ import XCTest
                   line: UInt = #line) {
         awaitAndTap(field, message, file: file, line: line)
         field.typeText(text)
+        // Verify the text landed (a tap that arrives mid-transition can leave the field
+        // unfocused); retry once before giving up.
+        let landed = { (String(describing: field.value ?? "")).contains(text) }
+        if !landed() {
+            field.tap()
+            field.typeText(text)
+        }
+        XCTAssertTrue(landed(), message + " (typed text did not land)", file: file, line: line)
     }
 
     /// Waits for an element to become enabled, then asserts it is. Polling the predicate is

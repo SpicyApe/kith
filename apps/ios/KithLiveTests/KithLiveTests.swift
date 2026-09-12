@@ -50,7 +50,8 @@ import XCTest
         if isSignedOut {
             typeInto(textField("onboarding.phone.field"), phone,
                      "Step 1: onboarding.phone.field never appeared")
-            awaitAndTap(app.buttons["onboarding.phone.continue"],
+            awaitEnabled(app.buttons["onboarding.phone.continue"], "Step 1: continue button never became enabled")
+        awaitAndTap(app.buttons["onboarding.phone.continue"],
                         "Step 1: onboarding.phone.continue never appeared")
             step("1. phone submitted")
 
@@ -66,7 +67,8 @@ import XCTest
             if nameField.waitForExistence(timeout: Self.timeout) {
                 nameField.tap()
                 nameField.typeText("CI Tester")
-                awaitAndTap(app.buttons["onboarding.name.continue"],
+                awaitEnabled(app.buttons["onboarding.name.continue"], "Step 1: continue button never became enabled")
+        awaitAndTap(app.buttons["onboarding.name.continue"],
                             "Step 1: onboarding.name.continue never appeared after typing the name")
                 awaitAndTap(app.buttons["onboarding.contacts.notNow"],
                             "Step 1: onboarding.contacts.notNow never appeared after saving the name")
