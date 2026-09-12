@@ -146,9 +146,7 @@ import XCTest
             shot.lifetime = .keepAlways
             add(shot)
             let tree = String(app.debugDescription.prefix(3000))
-            XCTFail(message + "
---- screen at failure ---
-" + tree, file: file, line: line)
+            XCTFail(message + "\n--- screen at failure ---\n" + tree, file: file, line: line)
         }
         return element
     }
