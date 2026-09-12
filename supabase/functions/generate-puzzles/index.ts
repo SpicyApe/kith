@@ -34,7 +34,11 @@ Deno.serve(async (req) => {
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
     const authHeader = req.headers.get("Authorization") ?? "";
-    const isCron = serviceRoleKey.length > 0 && (await constantTimeEqual(authHeader, `Bearer ${serviceRoleKey}`));
+    // pg_cron calls with KITH_CRON_SECRET as the bearer (plus the anon key as `apikey`
+    // for the gateway); the injected service key is accepted as well.
+    const cronSecret = Deno.env.get("KITH_CRON_SECRET") ?? "";
+    const isCron = (serviceRoleKey.length > 0 && (await constantTimeEqual(authHeader, `Bearer ${serviceRoleKey}`))) ||
+      (cronSecret.length > 0 && (await constantTimeEqual(authHeader, `Bearer ${cronSecret}`)));
 
     let isAdmin = false;
     if (!isCron) {

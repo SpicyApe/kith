@@ -41,12 +41,19 @@ applied, `CONTACT_PEPPER` is set, all six functions are deployed, and the GitHub
 7. Deploy functions: `supabase functions deploy register submit-result match-contacts delete-account send-pushes generate-puzzles`.
    `send-pushes` and `generate-puzzles` must be deployed with `--no-verify-jwt` because pg_cron calls
    them with the service-role key rather than a user JWT (the functions verify the bearer themselves).
-8. Cron. Store two Vault secrets, then apply `supabase/migrations/0002_cron.sql`:
+8. Cron. The two background functions are called by pg_cron with the anon key as
+   `apikey` (for the functions gateway) and a dedicated random secret as the bearer.
+   Set the secret on the functions (`supabase secrets set KITH_CRON_SECRET=<random>`),
+   store three Vault secrets, and schedule:
    ```sql
    select vault.create_secret('https://<ref>.supabase.co', 'project_url');
-   select vault.create_secret('<service role key>', 'service_role_key');
+   select vault.create_secret('<anon key>', 'anon_key');
+   select vault.create_secret('<KITH_CRON_SECRET value>', 'cron_secret');
+   select public.schedule_background_jobs();
    ```
-   Verify with `select * from cron.job;`.
+   Verify with `select jobname, schedule from cron.job;`. (The injected
+   `SUPABASE_SERVICE_ROLE_KEY` in the edge runtime is an `sb_secret_…` key that the
+   gateway refuses as a bearer, which is why a shared secret is used instead.)
 9. First puzzles: open the Admin page, sign in, press **Generate 30 days**, review, approve.
 
 ## 2. Website (Cloudflare Pages)

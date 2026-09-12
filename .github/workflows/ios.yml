@@ -115,6 +115,11 @@ jobs:
             | .[0].udid // empty')
           [ -n "$udid" ] || { echo "No available iPhone simulator"; exit 1; }
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          # Pre-boot so the very first app launch (there are no unit tests to warm
+          # things up in this job) does not race the simulator's own boot; a cold
+          # boot here produced "Timed out while acquiring background assertion".
+          xcrun simctl boot "$udid" || true
+          xcrun simctl bootstatus "$udid" -b
       - name: Live test
         working-directory: apps/ios
         env:
@@ -124,6 +129,7 @@ jobs:
           xcodebuild test -project Kith.xcodeproj -scheme KithLive \
             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             -resultBundlePath LiveResults.xcresult \
+            -retry-tests-on-failure -test-iterations 2 \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -quiet
       - name: Live test failure details
         if: failure()
