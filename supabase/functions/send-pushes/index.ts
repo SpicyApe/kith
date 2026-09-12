@@ -27,7 +27,7 @@ async function getCache(): Promise<ApnsTokenCache> {
 Deno.serve(async (req) => {
   if (req.method !== "POST") return methodNotAllowed();
   try {
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const serviceRoleKey = (Deno.env.get("KITH_SERVICE_ROLE_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
     // Callers (pg_cron via pg_net) authenticate with KITH_CRON_SECRET as the bearer and the
     // anon key as `apikey` for the gateway; the injected service key is accepted too.
     const cronSecret = Deno.env.get("KITH_CRON_SECRET") ?? "";

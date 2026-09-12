@@ -18,7 +18,7 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const serviceRoleKey = (Deno.env.get("KITH_SERVICE_ROLE_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
     const pepper = Deno.env.get("CONTACT_PEPPER") ?? "";
 
     const caller = await verifyCaller(req, supabaseUrl, anonKey);

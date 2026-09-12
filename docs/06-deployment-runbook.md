@@ -36,8 +36,10 @@ applied, `CONTACT_PEPPER` is set, all six functions are deployed, and the GitHub
    | `APNS_TEAM_ID` | Your Apple team ID |
    | `APNS_PRIVATE_KEY` | Contents of the .p8 file; newlines may be literal `\n` |
    | `APNS_BUNDLE_ID` | `app.kith.ios` |
+   | `KITH_SERVICE_ROLE_KEY` | The legacy `service_role` JWT (Project Settings → API Keys → Legacy). The runtime injects an `sb_secret_…` key as `SUPABASE_SERVICE_ROLE_KEY`, but PostgREST rejects it until new API keys are enabled for the project, so the functions prefer this one. |
+   | `KITH_CRON_SECRET` | Random string; pg_cron sends it as the bearer to `send-pushes` and `generate-puzzles` (see step 8) |
 
-   `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` are injected automatically.
+   `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` are injected automatically (the last one as an `sb_secret_…` key; see `KITH_SERVICE_ROLE_KEY`).
 7. Deploy functions: `supabase functions deploy register submit-result match-contacts delete-account send-pushes generate-puzzles`.
    `send-pushes` and `generate-puzzles` must be deployed with `--no-verify-jwt` because pg_cron calls
    them with the service-role key rather than a user JWT (the functions verify the bearer themselves).
