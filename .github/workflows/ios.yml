@@ -83,6 +83,11 @@ jobs:
     runs-on: macos-14
     needs: simulator-tests
     if: ${{ vars.KITH_LIVE_E2E == 'true' || inputs.live == true }}
+    # One live run at a time: they all sign in as the same Supabase test number and
+    # delete that account at the end, so overlapping runs would trip each other up.
+    concurrency:
+      group: kith-live-e2e
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v5
       - name: Select Xcode
