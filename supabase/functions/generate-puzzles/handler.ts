@@ -8,8 +8,13 @@ import type { GameKind, GeneratedGame } from "../_shared/games/common.ts";
 import { GAME_KINDS, gameSeedFor } from "../_shared/games/common.ts";
 import { generateDailyGame } from "../_shared/games/generate.ts";
 
-/** Wall-clock budget for the grid-games fill pass, so one slow/misbehaving run can't hang forever. */
-const GAMES_TIME_BUDGET_MS = 60_000;
+/**
+ * Wall-clock budget for the grid-games fill pass. Kept well under the edge runtime's
+ * per-request compute limit (a 60 s pass was killed with WORKER_RESOURCE_LIMIT on the live
+ * project after ~40 puzzles); whatever is left over is picked up by the next nightly run,
+ * and the initial 30-day backfill is done by invoking the function repeatedly.
+ */
+const GAMES_TIME_BUDGET_MS = 8_000;
 
 export interface ListRow {
   id: number;
