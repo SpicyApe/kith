@@ -70,7 +70,25 @@ import XCTest
                 awaitEnabled(app.buttons["onboarding.name.continue"], "Step 1: continue button never became enabled")
         awaitAndTap(app.buttons["onboarding.name.continue"],
                             "Step 1: onboarding.name.continue never appeared after typing the name")
-                awaitAndTap(app.buttons["onboarding.contacts.notNow"],
+                // Saving the name is the first real backend call. Watch briefly for either
+                // the contacts prompt or an error toast (toasts fade within seconds, so a
+                // plain 20 s wait would miss the reason); re-tap once if nothing changed.
+                let notNow = app.buttons["onboarding.contacts.notNow"]
+                let toast = element("toast")
+                var toastText: String?
+                let deadline = Date().addingTimeInterval(8)
+                while Date() < deadline, !notNow.exists {
+                    if toast.exists, !toast.label.isEmpty { toastText = toast.label }
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+                }
+                if !notNow.exists {
+                    if let toastText {
+                        XCTFail("Step 1: saving the name failed; toast said: (toastText)")
+                    }
+                    step("1. retrying Continue on the name step")
+                    app.buttons["onboarding.name.continue"].tap()
+                }
+                awaitAndTap(notNow,
                             "Step 1: onboarding.contacts.notNow never appeared after saving the name")
                 step("1. registered as a new user")
             } else {
