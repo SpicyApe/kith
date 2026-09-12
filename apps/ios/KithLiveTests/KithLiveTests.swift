@@ -74,16 +74,16 @@ import XCTest
                 // the contacts prompt or an error toast (toasts fade within seconds, so a
                 // plain 20 s wait would miss the reason); re-tap once if nothing changed.
                 let notNow = app.buttons["onboarding.contacts.notNow"]
-                let toast = element("toast")
-                var toastText: String?
                 let deadline = Date().addingTimeInterval(8)
                 while Date() < deadline, !notNow.exists {
-                    if toast.exists, !toast.label.isEmpty { toastText = toast.label }
                     RunLoop.current.run(until: Date().addingTimeInterval(0.5))
                 }
                 if !notNow.exists {
-                    if let toastText {
-                        XCTFail("Step 1: saving the name failed; toast said: (toastText)")
+                    // debug.status is a persistent test-only element carrying the model's
+                    // stage/step/busy/last-error; reading it is race-free unlike the toast.
+                    let status = element("debug.status")
+                    if status.exists {
+                        XCTFail("Step 1: saving the name did not advance; app status: (status.label)")
                     }
                     step("1. retrying Continue on the name step")
                     app.buttons["onboarding.name.continue"].tap()
