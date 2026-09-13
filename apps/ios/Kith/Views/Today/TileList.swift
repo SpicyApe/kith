@@ -51,17 +51,34 @@ struct TileList: View {
         let locked = engine.lockedPositions
         let names = labels
 
+        // A step skips over locked tiles: once tries have locked the middle of the board,
+        // "down" from the top tile has to land on the next *unlocked* slot or it is a
+        // no-op (the live test found exactly that after two tries). `nil` = no such slot.
+        let count = LineupEngine.tileCount
+        func nextUnlocked(from index: Int, step: Int) -> Int? {
+            var slot = index + step
+            while slot >= 0 && slot < count {
+                if !locked.contains(slot) { return slot }
+                slot += step
+            }
+            return nil
+        }
+
         List {
             ForEach(Array(engine.currentOrder.enumerated()), id: \.element) { index, itemId in
+                let up = nextUnlocked(from: index, step: -1)
+                let down = nextUnlocked(from: index, step: 1)
                 TileRow(
                     label: names[itemId] ?? "",
                     position: index,
                     isLocked: locked.contains(index),
                     isNear: nearPositions.contains(index),
-                    // SwiftUI's `.onMove` coordinates are "insert before", so one step
-                    // down is `position + 2` and one step up is `position - 1`.
-                    onMoveUp: { onMove(IndexSet(integer: index), index - 1) },
-                    onMoveDown: { onMove(IndexSet(integer: index), index + 2) }
+                    canMoveUp: up != nil,
+                    canMoveDown: down != nil,
+                    // SwiftUI's `.onMove` coordinates are "insert before": moving up to
+                    // slot `t` is destination `t`; moving down to slot `t` is `t + 1`.
+                    onMoveUp: { if let up { onMove(IndexSet(integer: index), up) } },
+                    onMoveDown: { if let down { onMove(IndexSet(integer: index), down + 1) } }
                 )
                 .moveDisabled(locked.contains(index))
                 .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
@@ -83,6 +100,9 @@ private struct TileRow: View {
     let position: Int
     let isLocked: Bool
     let isNear: Bool
+    /// False when every slot in that direction is locked (or there is none).
+    let canMoveUp: Bool
+    let canMoveDown: Bool
     let onMoveUp: () -> Void
     let onMoveDown: () -> Void
 
@@ -169,8 +189,10 @@ private struct TileRow: View {
         if UITesting.controlsActive, !isLocked {
             moveButton(systemImage: "chevron.up", suffix: "up",
                        label: "Move tile \(position + 1) up", action: onMoveUp)
+                .disabled(!canMoveUp)
             moveButton(systemImage: "chevron.down", suffix: "down",
                        label: "Move tile \(position + 1) down", action: onMoveDown)
+                .disabled(!canMoveDown)
         }
     }
 

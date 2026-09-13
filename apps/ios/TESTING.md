@@ -18,7 +18,9 @@ real views against an in-memory fake backend. No network, no Supabase project ne
 - `-uiTestingState <name>` picks the fake's starting state (see §2). Default `fresh`.
 - `-uiTesting` also renders a ▲ / ▼ button pair on each unlocked tile (identifiers
   `today.tile.<i>.up` / `today.tile.<i>.down`) so UI tests can reorder deterministically
-  without long-press drags. Outside UI-testing mode those buttons are not rendered, but every
+  without long-press drags. A step skips locked tiles and lands on the next unlocked slot;
+  a button is disabled when there is no such slot in its direction (after two tries that is
+  common, so a test's third round must try the other direction). Outside UI-testing mode those buttons are not rendered, but every
   tile always exposes accessibility actions named "Move up" and "Move down" (good for
   VoiceOver users regardless).
 

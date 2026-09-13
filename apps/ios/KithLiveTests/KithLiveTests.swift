@@ -132,13 +132,28 @@ import XCTest
             // `today.lockIn` submittable; we do not care whether the order is right, only
             // that the run ends on the results screen (solved or failed both do).
             for round in 1...3 {
+                // The ▼ button is disabled when every slot below is locked, and after two
+                // tries most of the board can be; fall back to any enabled ▲ so a third
+                // round always has a legal move.
                 var movedTile: Int?
+                var movedSuffix = "down"
                 for index in 0...3 {
                     let down = app.buttons["today.tile.\(index).down"]
                     if down.exists && down.isEnabled {
                         down.tap()
                         movedTile = index
                         break
+                    }
+                }
+                if movedTile == nil {
+                    for index in (1...4).reversed() {
+                        let up = app.buttons["today.tile.\(index).up"]
+                        if up.exists && up.isEnabled {
+                            up.tap()
+                            movedTile = index
+                            movedSuffix = "up"
+                            break
+                        }
                     }
                 }
                 XCTAssertNotNil(movedTile,
@@ -150,8 +165,8 @@ import XCTest
                 let enabled = NSPredicate(format: "isEnabled == true")
                 let firstTry = XCTNSPredicateExpectation(predicate: enabled, object: lockIn)
                 if XCTWaiter().wait(for: [firstTry], timeout: 5) != .completed, let movedTile {
-                    step("2. round \(round): re-tapping tile \(movedTile) down")
-                    app.buttons["today.tile.\(movedTile).down"].tap()
+                    step("2. round \(round): re-tapping tile \(movedTile) \(movedSuffix)")
+                    app.buttons["today.tile.\(movedTile).\(movedSuffix)"].tap()
                 }
                 awaitEnabled(lockIn,
                              "Step 2 (round \(round)): today.lockIn never became enabled after moving tile \(movedTile ?? -1) down; app status: \(element("debug.status").exists ? element("debug.status").label : "n/a")")
