@@ -140,11 +140,14 @@ import XCTest
         tapTab("tab.board")
 
         awaitElement(element("board.section.total"), "board.section.total never appeared")
-        awaitElement(element("board.section.quint"), "board.section.quint never appeared")
+        // The Quint header is the last section: below the fold behind the expanded All
+        // games rows, so the List has not created it until we scroll.
+        let quint = scrollUntilExists(element("board.section.quint"))
+        awaitElement(quint, "board.section.quint never appeared after scrolling")
 
         // Quint is collapsed by default; expanding it loads and reveals its rows (Mum and
         // Sam solve every grid/Quint board in the fake, TESTING.md §2).
-        awaitAndTap(element("board.section.quint"), "board.section.quint never became tappable")
+        awaitAndTap(quint, "board.section.quint never became tappable")
 
         let failed = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH 'board.row.' AND label CONTAINS 'failed'"))

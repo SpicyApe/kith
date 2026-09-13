@@ -161,8 +161,9 @@ import XCTest
         awaitElement(element("board.section.total"), "board.section.total never appeared")
         awaitElement(element("board.row.u-mum"), "board.row.u-mum never appeared under All games")
 
-        awaitElement(element("board.section.stars"), "board.section.stars never appeared")
-        awaitAndTap(element("board.section.stars"), "board.section.stars never became tappable")
+        let stars = scrollUntilExists(element("board.section.stars"))
+        awaitElement(stars, "board.section.stars never appeared after scrolling")
+        awaitAndTap(stars, "board.section.stars never became tappable")
 
         let gaveUp = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH 'board.row.' AND label CONTAINS 'gave up'"))

@@ -210,13 +210,25 @@ struct BoardView: View {
             emptyState
         } else {
             List {
+                // Not a `DisclosureGroup`: inside a List only its chevron toggles, so a tap on
+                // the title (and a UI test's tap on `board.section.<slug>`) did nothing. A
+                // plain button header plus conditional rows gives the whole header row the
+                // toggle and keeps the identifier on one tappable element.
                 ForEach(sectionGames, id: \.self) { game in
-                    DisclosureGroup(isExpanded: expandedBinding(for: game)) {
-                        sectionRows(for: game)
-                    } label: {
-                        sectionHeaderLabel(for: game)
+                    Section {
+                        Button {
+                            let binding = expandedBinding(for: game)
+                            binding.wrappedValue.toggle()
+                        } label: {
+                            sectionHeaderLabel(for: game)
+                        }
+                        .buttonStyle(.plain)
+                        .tint(sectionColor(for: game))
+
+                        if expanded.contains(game) {
+                            sectionRows(for: game)
+                        }
                     }
-                    .tint(sectionColor(for: game))
                 }
             }
             .listStyle(.plain)

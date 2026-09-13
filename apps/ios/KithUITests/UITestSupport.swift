@@ -225,4 +225,16 @@ import XCTest
         awaitElement(element, file: file, line: line)
         XCTAssertEqual(element.label, expected, file: file, line: line)
     }
+
+    /// Swipes up until `element` exists (at most `swipes` times), for rows a lazily rendered
+    /// List has not created yet because they sit below the fold — the lower Board sections,
+    /// the profile's delete button. Returns the element for chaining.
+    @discardableResult
+    func scrollUntilExists(_ element: XCUIElement, swipes: Int = 6) -> XCUIElement {
+        for _ in 0..<swipes where !element.exists {
+            app.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        }
+        return element
+    }
 }
