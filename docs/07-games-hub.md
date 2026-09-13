@@ -12,9 +12,21 @@ LinkedIn's names (Queens, Tango, Zip), icons, and copy are, so none of them appe
 - **Scoring** for the grid games is time-based, one attempt, no partial credit:
   `score = max(100, 1000 − 2 × min(elapsed_seconds, 450))`; giving up (revealing the
   solution) scores 100. Mistakes are shown on the results screen but do not change the score.
-- **Boards**: the Friends / Circles / Everyone boards get a game picker: Lineup, Stars, Duo,
-  Trail, and **Total** (sum of the four daily scores; unplayed games count 0). Week and
-  All-time sum totals. Rank movement is per picker value.
+- **Boards** (revised 2026-09-13): the client shows **Friends** and **Circles** only (no
+  Everyone board), **today and yesterday** only (no week / all-time), and the metric shown
+  is the **time taken to solve**, not points. The Board tab is one list with an expandable
+  section per game (Lineup, Stars, Duo, Trail, Quint) plus **All games** at the top; a
+  section loads its rows when first expanded. Each row: rank, name, today's time (or
+  "gave up" / "failed" / "—"), yesterday's time in secondary text, and the rank-movement
+  arrow. Per-game sections rank by today's time ascending among people who solved; gave
+  up / failed rows follow (still "played"), then unplayed. "All games" ranks by games
+  solved today descending, then total time ascending — that total is summed over every
+  game played today, solved or given up, not only the solved ones. Ranking is done on the
+  client from `board()` rows (`elapsed_ms`, `solved_count`, `played_count`, and the
+  `prev_*` twins from migration 0008); the server's score-based `rank` / `prev_rank` are
+  ignored by the client. A row with a rank today but no rank yesterday (unplayed or not
+  yet a friend) shows a **NEW** chip instead of a movement arrow. Tapping a row still
+  opens the reaction sheet; an unplayed row (no rank) is not tappable.
 - **Streak** counts a day when at least one game was played.
 - **Share** text per game, same shape as Lineup:
   ```

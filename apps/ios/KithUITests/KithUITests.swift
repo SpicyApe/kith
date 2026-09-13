@@ -77,11 +77,14 @@ import XCTest
 
         tapTab("tab.board")
 
+        // "All games" is expanded by default (docs/07 "Boards (revised 2026-09-13)"), so
+        // its rows are visible without expanding anything.
         awaitElement(element("board.row.u-mum"), "board.row.u-mum never appeared")
         awaitElement(element("board.row.u-sam"), "board.row.u-sam never appeared")
         awaitElement(element("board.row.u-dev"), "board.row.u-dev never appeared")
 
-        assertLabelEquals(element("board.header"), "3 of 4 friends played today")
+        // The header is now the board name + date, not a played-count sentence.
+        assertLabelContains(element("board.header"), "Friends")
 
         // The viewer's own row. It carries the `board.row.<userId>` identifier for `u-me`
         // (TESTING.md §2: "Me" is `u-me`) and is labelled "You" rather than the display
@@ -138,19 +141,37 @@ import XCTest
         assertLabelContains(element("profile.inviteCode"), "KITH7F3Q")
     }
 
-    // MARK: - 7. Everyone board disables the period picker
+    // MARK: - 7. Board sections expand
 
-    /// TESTING.md §5.7 (`played`): the Everyone board is today-only, so selecting it in
-    /// `board.kind` disables the `board.period` picker.
-    func testEveryoneBoardDisablesPeriod() {
-        let app = launch(state: "played")
+    /// TESTING.md §5.7 (`played`).
+    /// docs/07 "Boards (revised 2026-09-13)": the Board tab is one expandable section per
+    /// game plus "All games" at the top; "All games" starts expanded with rows already
+    /// visible, and tapping a collapsed section (Stars) reveals its own rows.
+    ///
+    /// Mum and Sam are also friends under "All games", which is always expanded — so a
+    /// plain `board.row.u-mum` / `board.row.u-sam` existence check after expanding Stars
+    /// would pass even if Stars never rendered anything (finding B5). Instead this asserts
+    /// on content that only exists under Stars: Dev's "gave up" row, and Mum's Stars time
+    /// (0:40), which differs from her Lineup time.
+    func testBoardSectionsExpand() {
+        launch(state: "played")
 
         tapTab("tab.board")
 
-        let kind = awaitElement(app.segmentedControls["board.kind"], "board.kind never appeared")
-        awaitAndTap(kind.buttons["Everyone"], "The Everyone segment never appeared")
+        awaitElement(element("board.section.total"), "board.section.total never appeared")
+        awaitElement(element("board.row.u-mum"), "board.row.u-mum never appeared under All games")
 
-        let period = app.segmentedControls["board.period"]
-        awaitDisabled(period, "board.period should be disabled while the Everyone board is shown")
+        awaitElement(element("board.section.stars"), "board.section.stars never appeared")
+        awaitAndTap(element("board.section.stars"), "board.section.stars never became tappable")
+
+        let gaveUp = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'board.row.' AND label CONTAINS 'gave up'"))
+            .firstMatch
+        awaitElement(gaveUp, "No board row showed \"gave up\" after expanding Stars")
+
+        let mumStars = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'board.row.' AND label CONTAINS '0:40'"))
+            .firstMatch
+        awaitElement(mumStars, "No board row showed Mum's Stars time (0:40) after expanding Stars")
     }
 }

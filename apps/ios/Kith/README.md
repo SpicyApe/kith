@@ -39,7 +39,7 @@ and the handful of API calls most likely to need a one-line fix.
 | `Views/Today/TodayView.swift` | Puzzle, played state, timer, "Lock in", results cover. |
 | `Views/Today/TileList.swift` | The five tiles (`List` + `.onMove`, locked rows `.moveDisabled`), plus `Haptics`. |
 | `Views/Results/ResultsView.swift` | Headline, score, grid, reveal strip, streak, rank teaser, taunt, `ShareLink`, Copy. |
-| `Views/Board/BoardView.swift` | Segmented controls, rows from `BoardPresenter`, reaction picker, empty state. `BoardRowView` lives here. |
+| `Views/Board/BoardView.swift` | Friends/Circles segmented control, one expandable `DisclosureGroup` section per game (`board.section.<slug>`) plus "All games", rows ranked client-side by `AppModel.rankRows`/`rankYesterday` (docs/07 "Boards (revised 2026-09-13)"), reaction sheet, empty state. `BoardRowView` lives here. |
 | `Views/Circles/CirclesView.swift` | List, create sheet, join sheet, share, leave. |
 | `Views/Profile/ProfileView.swift` | Header, `HeatmapView`, `StatsGrid`, invite code, settings, delete account. |
 | `Views/Shared/*.swift` | `Theme` (accent colour, card, button styles), `AvatarView`, `MovementChip`, `MiniGrid` + `AttemptGrid`, `Toast`. |
@@ -246,16 +246,19 @@ exercises this in `GamesTests`.
 
 ### Deviations from PLAN-games.md
 
-- **The `board.game` picker is `ViewThatFits { segmented; Menu }`, segmented listed first.**
-  An earlier revision hard-coded `.segmented` on the theory that every iPhone portrait width
-  is compact enough to fit five six-character labels; a reviewer flagged that as fragile
-  against Dynamic Type and narrower devices, so it now falls back to a `Menu` (same
-  `board.game` identifier either way) when the segmented control does not fit. Segmented was
-  listed first in `ViewThatFits` specifically so the CI simulator's width kept taking that
-  branch — but Quint's addition made it a six-segment control (Lineup/Stars/Duo/Trail/
-  Quint/Total), which no longer fits an iPhone-width simulator at all, so `ViewThatFits` now
-  always falls through to the `Menu` there. `GamesUITests.testBoardGamePicker` opens the
-  menu and taps its "Total" item rather than looking for `segmentedControls["board.game"]`.
+- **The board was rebuilt per docs/07 "Boards (revised 2026-09-13)": no `board.game`
+  picker, no Everyone board, no week/all-time period.** The six-segment `board.game`
+  control (Lineup/Stars/Duo/Trail/Quint/Total) that Quint's addition produced never fit an
+  iPhone-width simulator even behind `ViewThatFits { segmented; Menu }` — the revision
+  replaced it outright with one expandable section per game (`board.section.<slug>`,
+  `slug` a `BoardGame` raw value) plus "All games" at the top, `total` expanded by default
+  and the rest collapsed until tapped. Ranking moved entirely to the client
+  (`AppModel.rankRows`/`rankYesterday`/`rankMovement`, `BoardRankingTests`) from
+  `elapsed_ms`/`solved_count`/`played_count` and their `prev_*` twins (migration 0008);
+  the server's `rank`/`prev_rank`/`score` are no longer read by this screen. `board.kind`
+  keeps its identifier but now has two segments (Friends/Circles); `board.period` and
+  `board.game` are gone. `GamesUITests.testBoardGamePicker` now expands `board.section.quint`
+  instead of driving the old picker.
 - **The fake Duo grid is not exactly the six rows the brief listed.** `100011` (row 2) has
   three consecutive ●, which is illegal in Tango, and the columns force that row given the
   other five — so the grid as specified can never be completed. A brute force over all 11 222
@@ -273,10 +276,10 @@ exercises this in `GamesTests`.
   and `startGame` refuses to re-arm a game that already has a result today.
 - **Grid accessibility identifiers use 0-based coordinates, the spoken labels 1-based.**
   Identifiers match `today.tile.<i>`; VoiceOver says "row 1 column 2".
-- **`Views/Board/BoardView.swift` switched from `.listStyle(.plain)` to `.insetGrouped`** and
-  its title from `.inline` to `.large`, per the HIG checklist. `TileList` stays `.plain`: it
-  is a drag-to-reorder tile stack, not a settings list, and inset grouping would change the
-  Lineup screen's look.
+- **`Views/Board/BoardView.swift`'s title is `.large`** (`.inline` before), per the HIG
+  checklist; its list itself went back to `.listStyle(.plain)` with the 2026-09-13 board
+  rebuild (the expandable sections read better flush than inset-grouped). `TileList` stays
+  `.plain` throughout: it is a drag-to-reorder tile stack, not a settings list.
 - **`ResultsView`'s "Done" stays a plain text button** rather than becoming an SF Symbol
   toolbar item, because `KithLiveTests` taps it by the title as a fallback and text is the
   standard HIG treatment for a confirming toolbar action anyway.
@@ -321,9 +324,11 @@ exercises this in `GamesTests`.
   `CNContactFormatter` raises an exception if the contact was fetched without it.
 - **`CNAuthorizationStatus.limited` is matched by raw value (`4`), not by name**, so the
   file still compiles against the iOS 17 SDK if CI's Xcode is 15.x.
-- **Your own board row is pinned at the bottom only when the list has more than 8 rows.**
-  A real "sticky if scrolled out of view" needs scroll-offset tracking; this is the
-  cheap approximation.
+- **Your own board row no longer pins to the bottom.** It did, via a `safeAreaInset` shown
+  only past 8 rows, on the original single-list board; the 2026-09-13 board rebuild
+  (docs/07) replaced that list with one expandable section per game, where the approximation
+  no longer has a single "the list" to pin against, so it was dropped rather than
+  reimplemented per section.
 
 ## Where I'd look first if it doesn't compile
 

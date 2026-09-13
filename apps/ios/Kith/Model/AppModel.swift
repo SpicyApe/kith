@@ -185,6 +185,9 @@ final class AppModel {
     /// Boards whose last load failed. A cached `[]` for one of these is "we don't know",
     /// not "nobody played", so the next visit retries instead of returning the empty cache.
     var failedBoards: Set<BoardCacheKey> = []
+    /// Boards with a `board()` call currently in flight. Drives `BoardView`'s per-section
+    /// spinner and also dedupes concurrent callers onto the one request (findings B1/B2/C2).
+    var loadingBoards: Set<BoardCacheKey> = []
     var taunts: [Taunt] = []
     var reactions: [Reaction] = []
     var circles: [Circle] = []
@@ -1191,32 +1194,26 @@ final class AppModel {
         )
     }
 
-    func boardHeader(kind: BoardKind, scopeId: String?, period: BoardPeriod,
-                     game: BoardGame = .lineup) -> String {
-        let key = BoardCacheKey(kind: kind, scopeId: scopeId, period: period, date: today, game: game)
-        let raw = boards[key] ?? []
-        let others = raw.filter { $0.user_id != myUserId }
-        return BoardPresenter.headerText(played: others.filter(\.played).count, total: others.count)
-    }
-
-    /// Elapsed milliseconds per user for a cached board. `BoardDisplayRow` (KithCore, frozen)
-    /// carries no time, and the grid-game boards show time instead of a mini grid, so the
-    /// raw rows are consulted for that one column.
-    func elapsedMsByUser(kind: BoardKind, scopeId: String?, period: BoardPeriod,
-                         game: BoardGame) -> [String: Int] {
-        let key = BoardCacheKey(kind: kind, scopeId: scopeId, period: period, date: today, game: game)
-        var map: [String: Int] = [:]
-        for row in boards[key] ?? [] {
-            if let elapsed = row.elapsed_ms { map[row.user_id] = elapsed }
-        }
-        return map
+    /// Taunts and reactions for today. Split out of `refreshBoard` (finding C1) so a
+    /// caller loading several sections (`BoardView.reload`) fetches these once instead of
+    /// once per section — they're keyed by date, not by game.
+    func refreshSocial() async {
+        taunts = (try? await api.taunts(date: today)) ?? taunts
+        reactions = (try? await api.reactions(date: today)) ?? reactions
     }
 
     func refreshBoard(kind: BoardKind, scopeId: String?, period: BoardPeriod,
-                      game: BoardGame = .lineup, force: Bool = false) async {
+                      game: BoardGame = .lineup, force: Bool = false,
+                      includeSocial: Bool = true) async {
         let key = BoardCacheKey(kind: kind, scopeId: scopeId, period: period, date: today, game: game)
         // A board that failed last time is never served from the cache: retry it.
         if !force, boards[key] != nil, !failedBoards.contains(key) { return }
+        // A second caller for the same key while one is already in flight (e.g. `reload`
+        // racing a freshly-expanded section's `ensureLoaded`) just waits on the first
+        // rather than firing a duplicate request (finding C2).
+        if loadingBoards.contains(key) { return }
+        loadingBoards.insert(key)
+        defer { loadingBoards.remove(key) }
         do {
             let rows = try await api.board(kind: kind, scopeId: scopeId, period: period,
                                            date: today, game: game)
@@ -1228,10 +1225,164 @@ final class AppModel {
             // in doesn't render as a permanent "nobody has played".
             if force, boards[key] == nil { boards[key] = [] }
         }
-        if period == .today {
-            taunts = (try? await api.taunts(date: today)) ?? taunts
-            reactions = (try? await api.reactions(date: today)) ?? reactions
+        if includeSocial, period == .today {
+            await refreshSocial()
         }
+    }
+
+    // MARK: - Board ranking (docs/07 "Boards (revised 2026-09-13)")
+    //
+    // The revised board is ranked entirely on the client from `board()`'s raw rows —
+    // `elapsed_ms`, `solved_count`, `played_count` and their `prev_*` twins (migration
+    // 0008) — never from the server's score-based `rank` / `prev_rank`. Pure, static and
+    // independent of `AppModel` state so `BoardRankingTests` can drive it directly.
+
+    /// One row of a client-ranked board section.
+    struct RankedBoardRow: Identifiable, Equatable, Sendable {
+        var id: String { row.user_id }
+        let row: BoardRow
+        /// 1-based rank among rows that played (solved, then gave-up/failed), in the
+        /// section's order; nil for a row that has not played.
+        let rank: Int?
+        let solved: Bool
+        /// Played but not solved: "gave up" for the grid games, "failed" for Quint.
+        let attempted: Bool
+    }
+
+    private struct RankItem {
+        let row: BoardRow
+        let played: Bool
+        let solved: Bool
+        let elapsedMs: Int?
+        let solvedCount: Int
+    }
+
+    private static func rankItems(_ rows: [BoardRow], game: BoardGame, usePrev: Bool) -> [RankItem] {
+        rows.map { row in
+            let playedCount = usePrev ? row.prev_played_count : row.played_count
+            let playedFlag = usePrev ? row.prev_played : row.played
+            let solvedCount = (usePrev ? row.prev_solved_count : row.solved_count) ?? 0
+            // Fall back to the boolean flag (or, for today, the always-present `played`)
+            // when the migration-0008 count is absent, so older fixtures still rank.
+            let played = playedCount.map { $0 > 0 } ?? playedFlag ?? (usePrev ? false : row.played)
+            let elapsedMs = usePrev ? row.prev_elapsed_ms : row.elapsed_ms
+            // Lineup's solved/failed state is decided by the classic tries rule (the last
+            // attempt's feedback), matching `timeLabel(for:game:)` below, rather than by
+            // `solved_count` alone — the two used to be able to disagree (finding B4).
+            // Yesterday has no `attempts` of its own, so this only applies to today.
+            let solved: Bool
+            if game == .lineup, !usePrev {
+                solved = row.attempts?.last?.isSolved ?? (solvedCount > 0)
+            } else {
+                solved = solvedCount > 0
+            }
+            return RankItem(row: row, played: played, solved: solved,
+                            elapsedMs: elapsedMs, solvedCount: solvedCount)
+        }
+    }
+
+    private static func byName(_ a: RankItem, _ b: RankItem) -> Bool {
+        a.row.display_name < b.row.display_name
+    }
+
+    private static func rank(_ rows: [BoardRow], game: BoardGame, usePrev: Bool) -> [RankedBoardRow] {
+        let items = rankItems(rows, game: game, usePrev: usePrev)
+
+        if game == .total {
+            // All games: solved_count descending, then total elapsed_ms ascending.
+            let ranked = items.filter(\.played).sorted { a, b in
+                if a.solvedCount != b.solvedCount { return a.solvedCount > b.solvedCount }
+                let ae = a.elapsedMs ?? .max
+                let be = b.elapsedMs ?? .max
+                if ae != be { return ae < be }
+                return byName(a, b)
+            }
+            let unplayed = items.filter { !$0.played }.sorted(by: byName)
+            var out: [RankedBoardRow] = []
+            for (index, item) in ranked.enumerated() {
+                out.append(RankedBoardRow(row: item.row, rank: index + 1,
+                                          solved: item.solved, attempted: !item.solved))
+            }
+            for item in unplayed {
+                out.append(RankedBoardRow(row: item.row, rank: nil, solved: false, attempted: false))
+            }
+            return out
+        }
+
+        // Per-game: solved rows by elapsed_ms ascending, then gave-up/failed rows (still
+        // "played"), then unplayed rows. Ties within a group by display_name.
+        let solvedItems = items.filter(\.solved).sorted { a, b in
+            let ae = a.elapsedMs ?? .max
+            let be = b.elapsedMs ?? .max
+            if ae != be { return ae < be }
+            return byName(a, b)
+        }
+        let attemptedItems = items.filter { $0.played && !$0.solved }.sorted(by: byName)
+        let unplayedItems = items.filter { !$0.played }.sorted(by: byName)
+
+        var out: [RankedBoardRow] = []
+        var nextRank = 1
+        for item in solvedItems + attemptedItems {
+            out.append(RankedBoardRow(row: item.row, rank: nextRank,
+                                      solved: item.solved, attempted: !item.solved))
+            nextRank += 1
+        }
+        for item in unplayedItems {
+            out.append(RankedBoardRow(row: item.row, rank: nil, solved: false, attempted: false))
+        }
+        return out
+    }
+
+    /// Today's ranking for one board section.
+    static func rankRows(_ rows: [BoardRow], game: BoardGame) -> [RankedBoardRow] {
+        rank(rows, game: game, usePrev: false)
+    }
+
+    /// Yesterday's ranking, from the same rows' `prev_*` fields, same rules — used only to
+    /// compute rank movement.
+    static func rankYesterday(_ rows: [BoardRow], game: BoardGame) -> [RankedBoardRow] {
+        rank(rows, game: game, usePrev: true)
+    }
+
+    /// `prevRank − rank`; nil when either side is absent (didn't play one of the two days).
+    /// Positive means the row climbed (moved up); negative means it fell.
+    static func rankMovement(rank: Int?, prevRank: Int?) -> Int? {
+        guard let rank, let prevRank else { return nil }
+        return prevRank - rank
+    }
+
+    /// Today's time column: "1:23", "gave up" (grid games), "failed" (Quint) or "—".
+    /// Lineup's solved/failed state comes from `attempts` (the classic tries rule) rather
+    /// than `solved_count`, falling back to `solved_count` when `attempts` is absent.
+    static func timeLabel(for row: BoardRow, game: BoardGame) -> String {
+        switch game {
+        case .lineup:
+            guard row.played else { return "—" }
+            let solved: Bool
+            if let last = row.attempts?.last {
+                solved = last.isSolved
+            } else {
+                solved = (row.solved_count ?? 0) > 0
+            }
+            if solved, let elapsed = row.elapsed_ms { return clock(elapsed) }
+            return "—"
+        case .total:
+            if (row.solved_count ?? 0) > 0, let elapsed = row.elapsed_ms { return clock(elapsed) }
+            return "—"
+        case .stars, .duo, .trail, .quint:
+            if (row.solved_count ?? 0) > 0, let elapsed = row.elapsed_ms { return clock(elapsed) }
+            if (row.played_count ?? 0) > 0 { return game == .quint ? "failed" : "gave up" }
+            return "—"
+        }
+    }
+
+    /// Yesterday's caption text: "yesterday 1:12" or "yesterday —". Yesterday never shows
+    /// "gave up" / "failed" wording (docs/07) — only a solved time or a dash.
+    static func yesterdayLabel(for row: BoardRow) -> String {
+        if (row.prev_solved_count ?? 0) > 0, let elapsed = row.prev_elapsed_ms {
+            return "yesterday \(clock(elapsed))"
+        }
+        return "yesterday —"
     }
 
     func react(to userId: String, emoji: String) async {

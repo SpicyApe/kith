@@ -68,6 +68,39 @@ public struct BoardRow: Codable, Sendable, Equatable {
     public let played: Bool
     public let rank: Int?
     public let prev_rank: Int?
+    // Migration 0008: the current window's counts and the previous window (yesterday for
+    // period 'today'). Optional so rows from older fixtures still decode.
+    public let solved_count: Int?
+    public let played_count: Int?
+    public let prev_score: Int?
+    public let prev_played: Bool?
+    public let prev_elapsed_ms: Int?
+    public let prev_solved_count: Int?
+    public let prev_played_count: Int?
+
+    public init(user_id: String, display_name: String, score: Int, tries: Int? = nil,
+                elapsed_ms: Int? = nil, attempts: [Attempt]? = nil, played: Bool,
+                rank: Int? = nil, prev_rank: Int? = nil,
+                solved_count: Int? = nil, played_count: Int? = nil,
+                prev_score: Int? = nil, prev_played: Bool? = nil, prev_elapsed_ms: Int? = nil,
+                prev_solved_count: Int? = nil, prev_played_count: Int? = nil) {
+        self.user_id = user_id
+        self.display_name = display_name
+        self.score = score
+        self.tries = tries
+        self.elapsed_ms = elapsed_ms
+        self.attempts = attempts
+        self.played = played
+        self.rank = rank
+        self.prev_rank = prev_rank
+        self.solved_count = solved_count
+        self.played_count = played_count
+        self.prev_score = prev_score
+        self.prev_played = prev_played
+        self.prev_elapsed_ms = prev_elapsed_ms
+        self.prev_solved_count = prev_solved_count
+        self.prev_played_count = prev_played_count
+    }
 }
 
 public struct Circle: Codable, Sendable, Equatable, Identifiable {

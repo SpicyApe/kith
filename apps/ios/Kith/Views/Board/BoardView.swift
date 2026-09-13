@@ -1,4 +1,9 @@
-// BoardView.swift — docs/03 §4.
+// BoardView.swift — docs/07-games-hub.md §Product rules → "Boards (revised 2026-09-13)".
+//
+// Friends / Circles only (no Everyone), today-and-yesterday only (no week / all-time),
+// one expandable section per game plus "All games" at the top. Ranking is entirely
+// client-side (`AppModel.rankRows` / `rankYesterday`); the server's score-based
+// `rank` / `prev_rank` are ignored here.
 
 import KithCore
 import Foundation
@@ -10,61 +15,39 @@ struct BoardView: View {
     @Environment(AppModel.self) private var model
 
     @State private var kind: BoardKind = .friends
-    @State private var period: BoardPeriod = .today
-    /// docs/07: the boards gained a per-game column, plus a summed Total.
-    @State private var game: BoardGame = .lineup
+    @State private var expanded: Set<BoardGame> = [.total]
     @State private var reactingTo: String?
+
+    /// Order the sections render in (docs/07): All games first, then the four original
+    /// games, then Quint.
+    private let sectionGames: [BoardGame] = [.total, .lineup, .stars, .duo, .trail, .quint]
 
     private var scopeId: String? {
         kind == .circle ? model.selectedCircleId : nil
     }
 
-    private var rows: [BoardDisplayRow] {
-        model.rows(kind: kind, scopeId: scopeId, period: period, game: game)
-    }
-
     var body: some View {
         NavigationStack {
             VStack(spacing: 12) {
-                Picker("Board", selection: $kind) {
-                    Text("Friends").tag(BoardKind.friends)
-                    Text("Circles").tag(BoardKind.circle)
-                    Text("Everyone").tag(BoardKind.everyone)
-                }
-                .pickerStyle(.segmented)
-                .accessibilityLabel("Which board")
-                .accessibilityIdentifier("board.kind")
+                VStack(spacing: 12) {
+                    Picker("Board", selection: $kind) {
+                        Text("Friends").tag(BoardKind.friends)
+                        Text("Circles").tag(BoardKind.circle)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel("Which board")
+                    .accessibilityIdentifier("board.kind")
 
-                Picker("Period", selection: $period) {
-                    Text("Today").tag(BoardPeriod.today)
-                    Text("Week").tag(BoardPeriod.week)
-                    Text("All-time").tag(BoardPeriod.all)
-                }
-                .pickerStyle(.segmented)
-                .controlSize(.small)
-                // The Everyone board is today-only on the server; the control would
-                // otherwise offer two periods that silently return the same rows.
-                .disabled(kind == .everyone)
-                .accessibilityLabel("Which period")
-                .accessibilityIdentifier("board.period")
+                    if kind == .circle {
+                        circleChips
+                    }
 
-                // A `Menu` picks up the slack on any width where the five-segment control
-                // would clip; the segmented control is listed first so it wins on every
-                // simulator size the hermetic UI tests run against (finding C2).
-                ViewThatFits {
-                    segmentedGamePicker
-                    gameMenuPicker
+                    header
                 }
-
-                if kind == .circle {
-                    circleChips
-                }
-
-                header
+                .padding(.horizontal, 16)
 
                 content
             }
-            .padding(.horizontal, 16)
             .padding(.top, 8)
             .navigationTitle("Board")
             .navigationBarTitleDisplayMode(.large)
@@ -72,9 +55,6 @@ struct BoardView: View {
             // Arriving at the board is what completes the "friends found" onboarding
             // step; FriendsFoundStep's button only switches tabs.
             .task { await completeFriendsFoundStep() }
-            .onChange(of: kind) { _, k in
-                if k == .everyone { period = .today }
-            }
             .refreshable {
                 await model.syncContacts(userInitiated: true)
                 await reload(force: true)
@@ -83,65 +63,101 @@ struct BoardView: View {
     }
 
     private var reloadKey: String {
-        "\(kind.rawValue)|\(scopeId ?? "")|\(period.rawValue)|\(game.rawValue)|\(model.today)"
+        "\(kind.rawValue)|\(scopeId ?? "")|\(model.today)"
     }
 
+    /// Loads the circle list (if needed) and every currently-expanded section. Called on
+    /// appear/kind-change and by pull-to-refresh; expanding a new section loads just that
+    /// one (`ensureLoaded`).
     private func reload(force: Bool) async {
         if kind == .circle, model.circles.isEmpty {
             await model.loadCircles()
         }
-        await model.refreshBoard(kind: kind, scopeId: scopeId, period: period,
-                                 game: game, force: force)
+        // Taunts/reactions are the same for every section (they're keyed by date, not
+        // game), so fetch them once here rather than once per expanded section
+        // (`refreshBoard(includeSocial:)`, finding C1).
+        for game in expanded {
+            await model.refreshBoard(kind: kind, scopeId: scopeId, period: .today,
+                                     game: game, force: force, includeSocial: false)
+        }
+        await model.refreshSocial()
     }
 
-    /// A method rather than a body inside `.task`, because `.task` takes a `@Sendable`
-    /// closure that does not inherit this view's `@MainActor` isolation; awaiting a
-    /// main-actor method is the hop.
+    /// A method rather than a body inside `.task`; `.task` takes a `@Sendable` closure that
+    /// does not inherit this view's `@MainActor` isolation, so the hop is the `await` on
+    /// this.
     private func completeFriendsFoundStep() async {
         if model.tail == .friendsFound {
             model.advanceTail()
         }
     }
 
+    /// Loads a section's rows the first time it's expanded; cheap no-op once cached.
+    private func ensureLoaded(_ game: BoardGame) async {
+        let key = boardKey(for: game)
+        if model.boards[key] != nil { return }
+        await model.refreshBoard(kind: kind, scopeId: scopeId, period: .today, game: game)
+    }
+
+    private func boardKey(for game: BoardGame) -> BoardCacheKey {
+        BoardCacheKey(kind: kind, scopeId: scopeId, period: .today, date: model.today, game: game)
+    }
+
+    private func rawRows(for game: BoardGame) -> [BoardRow] {
+        model.boards[boardKey(for: game)] ?? []
+    }
+
+    private func expandedBinding(for game: BoardGame) -> Binding<Bool> {
+        Binding(
+            get: { expanded.contains(game) },
+            set: { isExpanded in
+                if isExpanded {
+                    expanded.insert(game)
+                    Task { await ensureLoaded(game) }
+                } else {
+                    expanded.remove(game)
+                }
+            }
+        )
+    }
+
     // MARK: Header
 
     @ViewBuilder
     private var header: some View {
+        HStack {
+            Text(headerText)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("board.header")
+            Spacer()
+            if kind == .circle, let circle = model.circles.first(where: { $0.id == model.selectedCircleId }) {
+                Button {
+                    UIPasteboard.general.string = "KITH-\(circle.code)"
+                    model.show(toast: "Code copied.", isError: false)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Copy the circle code")
+            }
+        }
+    }
+
+    /// "Friends · Thursday, Sep 11" or "<circle name> · Thursday, Sep 11" (docs/07: the
+    /// header is now the board name + date, not a played-count sentence).
+    private var headerText: String {
+        let name: String
         switch kind {
         case .friends:
-            HStack {
-                Text(model.boardHeader(kind: .friends, scopeId: nil, period: period, game: game))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("board.header")
-                Spacer()
-            }
+            name = "Friends"
         case .circle:
-            if let circle = model.circles.first(where: { $0.id == model.selectedCircleId }) {
-                HStack {
-                    Text("KITH-\(circle.code)")
-                        .font(.subheadline.monospaced())
-                    Button {
-                        UIPasteboard.general.string = "KITH-\(circle.code)"
-                        model.show(toast: "Code copied.", isError: false)
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .accessibilityLabel("Copy the circle code")
-                    Spacer()
-                }
-            }
+            name = model.circles.first(where: { $0.id == model.selectedCircleId })?.name ?? "Circle"
         case .everyone:
-            HStack {
-                Text("Everyone playing today")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Color.secondary)
-                Spacer()
-            }
-            .padding(.vertical, 4)
+            name = "Friends"
         }
+        return "\(name) · \(AppModel.headerDate(model.today))"
     }
 
     private var circleChips: some View {
@@ -174,111 +190,36 @@ struct BoardView: View {
         }
     }
 
-    // MARK: Game picker (docs/07, finding C2)
+    // MARK: Sections
 
-    private var segmentedGamePicker: some View {
-        Picker("Game", selection: $game) {
-            Text("Lineup").tag(BoardGame.lineup)
-            Text("Stars").tag(BoardGame.stars)
-            Text("Duo").tag(BoardGame.duo)
-            Text("Trail").tag(BoardGame.trail)
-            Text("Quint").tag(BoardGame.quint)
-            Text("Total").tag(BoardGame.total)
-        }
-        .pickerStyle(.segmented)
-        .controlSize(.small)
-        .accessibilityLabel("Which game")
-        .accessibilityIdentifier("board.game")
-    }
-
-    /// Same choices, as a `Menu` for widths the segmented control does not fit — six
-    /// segments (Lineup, Stars, Duo, Trail, Quint, Total) may not fit an iPhone-width
-    /// screen, in which case `ViewThatFits` falls through to this form (finding C2). Which
-    /// form actually renders depends on the simulator/device width, so
-    /// `GamesUITests.testBoardGamePicker` is written to drive either one.
-    private var gameMenuPicker: some View {
-        Menu {
-            Picker("Game", selection: $game) {
-                Text("Lineup").tag(BoardGame.lineup)
-                Text("Stars").tag(BoardGame.stars)
-                Text("Duo").tag(BoardGame.duo)
-                Text("Trail").tag(BoardGame.trail)
-                Text("Quint").tag(BoardGame.quint)
-                Text("Total").tag(BoardGame.total)
-            }
-        } label: {
-            HStack {
-                Text(gameLabel(game))
-                    .font(.subheadline.weight(.medium))
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption)
-            }
-            .foregroundStyle(Color.primary)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-            .background(Capsule().fill(Color.secondary.opacity(0.12)))
-        }
-        .accessibilityLabel("Which game")
-        .accessibilityIdentifier("board.game")
-    }
-
-    private func gameLabel(_ game: BoardGame) -> String {
-        switch game {
-        case .lineup: return "Lineup"
-        case .stars: return "Stars"
-        case .duo: return "Duo"
-        case .trail: return "Trail"
-        case .quint: return "Quint"
-        case .total: return "Total"
-        }
-    }
-
-    // MARK: Rows
+    /// "All games" is always expanded/loaded, so its cache entry stands in for "does this
+    /// board have anyone on it at all" the way the old single-list `rows` did (findings
+    /// B1/B2): `nil` means "not loaded yet" (spinner), a failed key with no cache means
+    /// "couldn't load" (retry row), and only an actually-empty `[]` means the empty state.
+    private var totalKey: BoardCacheKey { boardKey(for: .total) }
 
     @ViewBuilder
     private var content: some View {
-        // `rows` recomputes the whole presenter pass on every read, so bind it once and
-        // partition that single snapshot.
-        let all = rows
-        let played = all.filter(\.played)
-        let unplayed = all.filter { !$0.played }
-
-        let times = model.elapsedMsByUser(kind: kind, scopeId: scopeId, period: period, game: game)
-
-        if all.isEmpty {
+        if kind == .circle, model.circles.isEmpty {
+            emptyState
+        } else if model.boards[totalKey] == nil, model.loadingBoards.contains(totalKey) {
+            loadingState
+        } else if model.boards[totalKey] == nil, model.failedBoards.contains(totalKey) {
+            errorState(for: .total)
+        } else if (model.boards[totalKey] ?? []).isEmpty {
             emptyState
         } else {
             List {
-                ForEach(played) { row in
-                    BoardRowView(row: row, period: period, game: game,
-                                 timeText: timeText(for: row, times: times),
-                                 showReactions: kind != .everyone) {
-                        reactingTo = row.userId
+                ForEach(sectionGames, id: \.self) { game in
+                    DisclosureGroup(isExpanded: expandedBinding(for: game)) {
+                        sectionRows(for: game)
+                    } label: {
+                        sectionHeaderLabel(for: game)
                     }
-                }
-                if !unplayed.isEmpty {
-                    Section("Haven't played yet") {
-                        ForEach(unplayed) { row in
-                            BoardRowView(row: row, period: period, game: game, timeText: nil,
-                                         showReactions: false, onReact: {})
-                                .opacity(0.55)
-                        }
-                    }
+                    .tint(sectionColor(for: game))
                 }
             }
-            .listStyle(.insetGrouped)
-            // docs/03 §4: your own row sticks to the bottom once the list is long
-            // enough that it can scroll out of view.
-            .safeAreaInset(edge: .bottom) {
-                if all.count > 8, let me = all.first(where: \.isMe) {
-                    BoardRowView(row: me, period: period, game: game,
-                                 timeText: timeText(for: me, times: times),
-                                 showReactions: false, onReact: {})
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                        .background(.regularMaterial)
-                }
-            }
+            .listStyle(.plain)
             .confirmationDialog(
                 "React",
                 isPresented: Binding(
@@ -300,30 +241,148 @@ struct BoardView: View {
         }
     }
 
-    /// docs/07: grid-game boards show the solve time where Lineup shows its mini grid.
-    /// Total shows the summed score only, so no time there either.
-    private func timeText(for row: BoardDisplayRow, times: [String: Int]) -> String? {
-        guard period == .today, row.played else { return nil }
+    private func sectionTitle(_ game: BoardGame) -> String {
         switch game {
-        case .lineup, .total: return nil
-        case .stars, .duo, .trail, .quint:
-            guard let elapsed = times[row.userId] else { return nil }
-            return AppModel.clock(elapsed)
+        case .total: return "All games"
+        case .lineup: return "Lineup"
+        case .stars: return "Stars"
+        case .duo: return "Duo"
+        case .trail: return "Trail"
+        case .quint: return "Quint"
         }
     }
 
-    /// Each board is empty for a different reason, and the circle board has its own
-    /// join-code affordance in the header, so "Invite" would be the wrong button there.
+    private func sectionColor(for game: BoardGame) -> Color {
+        switch game {
+        case .total: return Color.kithAccent
+        case .lineup: return Theme.lineup
+        case .stars: return Theme.stars
+        case .duo: return Theme.duo
+        case .trail: return Theme.trail
+        case .quint: return Theme.quint
+        }
+    }
+
+    private func sectionHeaderLabel(for game: BoardGame) -> some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(sectionColor(for: game))
+                .frame(width: 24, height: 24)
+            Text(sectionTitle(game))
+                .font(.headline)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        // Moved here from the `DisclosureGroup` itself (finding B6): the group's own
+        // identifier used to cover its expanded content too, which made the header
+        // ambiguous to address once a section was open.
+        .accessibilityIdentifier("board.section.\(game.rawValue)")
+    }
+
+    @ViewBuilder
+    private func sectionRows(for game: BoardGame) -> some View {
+        let key = boardKey(for: game)
+        if model.loadingBoards.contains(key), model.boards[key] == nil {
+            HStack {
+                Spacer()
+                ProgressView()
+                Spacer()
+            }
+            .padding(.vertical, 12)
+        } else if model.failedBoards.contains(key), model.boards[key] == nil {
+            errorState(for: game)
+        } else {
+            let raw = rawRows(for: game)
+            if raw.isEmpty {
+                Text("Nobody's played yet.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 6)
+            } else {
+                let ranked = AppModel.rankRows(raw, game: game)
+                // `uniqueKeysWithValues:` traps on a duplicate user_id; the server is not
+                // guaranteed unique here, so fold duplicates instead of crashing (finding A1).
+                let yesterdayRank = Dictionary(
+                    AppModel.rankYesterday(raw, game: game).map { ($0.row.user_id, $0.rank) },
+                    uniquingKeysWith: { first, _ in first }
+                )
+                ForEach(ranked) { row in
+                    BoardRowView(
+                        ranked: row,
+                        game: game,
+                        isMe: row.row.user_id == model.myUserId,
+                        name: displayName(for: row.row),
+                        movement: movement(rank: row.rank, prevRank: yesterdayRank[row.row.user_id] ?? nil)
+                    ) {
+                        reactingTo = row.row.user_id
+                    }
+                    .opacity(row.rank == nil ? 0.55 : 1)
+                }
+            }
+        }
+    }
+
+    /// Centred spinner shown while a board's first load (cold tab or a freshly-expanded
+    /// section) is in flight (findings B1/B2).
+    private var loadingState: some View {
+        VStack {
+            Spacer(minLength: 0)
+            ProgressView()
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(24)
+    }
+
+    /// Shown for a board key whose last load failed and has no cache to fall back on
+    /// (findings B1/B2). Retrying re-runs `refreshBoard(force: true)` for just that key.
+    private func errorState(for game: BoardGame) -> some View {
+        VStack(spacing: 12) {
+            Spacer(minLength: 0)
+            Text("Couldn't load this board.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Try again") {
+                Task {
+                    await model.refreshBoard(kind: kind, scopeId: scopeId, period: .today,
+                                             game: game, force: true)
+                }
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .accessibilityIdentifier("board.retry")
+            Spacer(minLength: 0)
+        }
+        .padding(24)
+    }
+
+    private func movement(rank: Int?, prevRank: Int?) -> RankMovement {
+        guard let rank else { return .none }
+        guard let prevRank else { return .new }
+        switch AppModel.rankMovement(rank: rank, prevRank: prevRank) {
+        case .some(let delta) where delta > 0: return .up(delta)
+        case .some(let delta) where delta < 0: return .down(-delta)
+        default: return .same
+        }
+    }
+
+    /// The viewer's own row is "You"; everyone else prefers the contact-book name.
+    private func displayName(for row: BoardRow) -> String {
+        if row.user_id == model.myUserId { return "You" }
+        return model.friendNames[row.user_id] ?? row.display_name
+    }
+
+    /// Each board is empty for a different reason.
     private var emptyHeadline: String {
         switch kind {
-        case .friends:
+        case .friends, .everyone:
             return "None of your contacts play yet. Be the one who started it."
         case .circle:
             return model.circles.isEmpty
                 ? "You're not in a circle yet. Create one or join with a code."
                 : "Nobody in this circle has played today."
-        case .everyone:
-            return "Nobody has played today yet. You could be first."
         }
     }
 
@@ -389,93 +448,90 @@ struct BoardView: View {
 
 @MainActor
 struct BoardRowView: View {
-    let row: BoardDisplayRow
-    let period: BoardPeriod
-    /// Which column this board is showing (docs/07). Lineup keeps the mini grid; the grid
-    /// games show `timeText`; Total shows the score alone.
-    var game: BoardGame = .lineup
-    var timeText: String?
-    let showReactions: Bool
+    let ranked: AppModel.RankedBoardRow
+    let game: BoardGame
+    let isMe: Bool
+    let name: String
+    let movement: RankMovement
     let onReact: () -> Void
+
+    // Findings C5: rank column and avatar scale with Dynamic Type instead of staying
+    // pinned at a fixed point size.
+    @ScaledMetric private var rankWidth: CGFloat = 24
+    @ScaledMetric private var avatarSize: CGFloat = 32
+
+    private var row: BoardRow { ranked.row }
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(row.rank.map { "\($0)" } ?? "–")
-                .font(.subheadline.monospacedDigit())
+            Text(ranked.rank.map { "\($0)" } ?? "–")
+                .font(.system(.subheadline, design: .rounded).monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 24, alignment: .leading)
+                .frame(width: rankWidth, alignment: .leading)
 
-            MovementChip(movement: row.movement)
+            MovementChip(movement: movement)
 
-            AvatarView(name: row.name, size: 32, highlighted: row.isMe)
+            AvatarView(name: name, size: avatarSize, highlighted: isMe)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(row.name)
-                    .font(.body.weight(row.isMe ? .semibold : .regular))
+                Text(name)
+                    .font(.body.weight(isMe ? .semibold : .regular))
                     .lineLimit(1)
-                if let taunt = row.taunt, !taunt.isEmpty {
-                    Text(taunt)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                if !row.reactions.isEmpty {
-                    Text(row.reactions.joined())
-                        .font(.caption)
-                }
+
+                Text(AppModel.yesterdayLabel(for: row))
+                    .font(.system(.caption, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 8)
 
-            if game == .lineup, period == .today, !row.miniGrid.isEmpty {
-                MiniGrid(feedback: row.miniGrid)
-            } else if let timeText {
-                Text(timeText)
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
+            // Findings C8: a gave-up/failed row (`attempted`) reads as a dimmer, distinct
+            // shade from a solved one, rather than styling every row identically.
+            Text(AppModel.timeLabel(for: row, game: game))
+                .font(.system(.subheadline, design: .rounded).monospacedDigit())
+                .foregroundStyle(ranked.attempted ? .tertiary : .secondary)
 
-            Text(row.played ? "\(row.score)" : "—")
-                .font(.subheadline.monospacedDigit())
-                .frame(minWidth: 44, alignment: .trailing)
-
-            if showReactions, !row.isMe, row.played {
+            if !isMe, ranked.rank != nil {
                 Button {
                     onReact()
                 } label: {
-                    Image(systemName: row.myReaction == nil ? "face.smiling" : "face.smiling.inverse")
+                    Image(systemName: "face.smiling")
                         .font(.body)
                         // HIG: a 44 pt target even though the glyph is small.
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("React to \(row.name)")
+                .accessibilityLabel("React to \(name)")
             }
         }
         .padding(.vertical, 4)
+        .frame(minHeight: 44)
         .overlay(alignment: .leading) {
-            if row.isMe {
+            if isMe {
                 Rectangle()
                     .fill(Color.kithAccent)
                     .frame(width: 3)
                     .offset(x: -12)
             }
         }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if !isMe, ranked.rank != nil { onReact() }
+        }
         // `.contain` rather than `.combine`: the row keeps its own summary label, and the
         // name inside it (notably "You") stays an addressable static text for UI tests.
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityText)
-        .accessibilityIdentifier("board.row.\(row.userId)")
+        .accessibilityIdentifier("board.row.\(row.user_id)")
     }
 
     private var accessibilityText: String {
         var parts: [String] = []
-        if let rank = row.rank { parts.append("rank \(rank)") }
-        parts.append(row.name)
-        parts.append(row.played ? "score \(row.score)" : "hasn't played yet")
-        if let timeText, row.played { parts.append("time \(timeText)") }
-        if let taunt = row.taunt, !taunt.isEmpty { parts.append("says \(taunt)") }
+        if let rank = ranked.rank { parts.append("rank \(rank)") }
+        parts.append(name)
+        parts.append(AppModel.timeLabel(for: row, game: game))
+        parts.append(AppModel.yesterdayLabel(for: row))
         return parts.joined(separator: ", ")
     }
 }

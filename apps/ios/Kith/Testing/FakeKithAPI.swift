@@ -100,12 +100,21 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         var user_id: String
         var display_name: String
         var score: Int
-        var tries: Int?
-        var elapsed_ms: Int?
-        var attempts: [Attempt]?
+        var tries: Int? = nil
+        var elapsed_ms: Int? = nil
+        var attempts: [Attempt]? = nil
         var played: Bool
-        var rank: Int?
-        var prev_rank: Int?
+        var rank: Int? = nil
+        var prev_rank: Int? = nil
+        // docs/07 "Boards (revised 2026-09-13)" / migration 0008: today's and yesterday's
+        // counts, used by the client's own ranking instead of `rank`/`prev_rank` above.
+        var solved_count: Int? = nil
+        var played_count: Int? = nil
+        var prev_score: Int? = nil
+        var prev_played: Bool? = nil
+        var prev_elapsed_ms: Int? = nil
+        var prev_solved_count: Int? = nil
+        var prev_played_count: Int? = nil
     }
 
     private struct CircleSeed: Encodable {
@@ -428,12 +437,12 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         recordedCalls.append("board(\(kind.rawValue),\(period.rawValue),\(game.rawValue))")
         switch kind {
         case .friends:
-            return try Self.convert(friendRowSeeds(on: date), to: [BoardRow].self)
+            return try Self.convert(friendRowSeeds(game: game, on: date), to: [BoardRow].self)
         case .everyone:
             return try Self.convert(Self.everyoneRowSeeds(), to: [BoardRow].self)
         case .circle:
             guard circleSeeds.contains(where: { $0.id == (scopeId ?? Self.circleId) }) else { return [] }
-            return try Self.convert(circleRowSeeds(on: date), to: [BoardRow].self)
+            return try Self.convert(circleRowSeeds(game: game, on: date), to: [BoardRow].self)
         }
     }
 
@@ -899,38 +908,174 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         }
     }
 
-    // MARK: - Board data
+    // MARK: - Board data (docs/07 "Boards (revised 2026-09-13)")
+
+    /// Dispatches to the per-game fixture. Every game (Lineup included) now carries its
+    /// own `solved_count` / `played_count` / `prev_*` fields, since the client ranks each
+    /// section from those instead of the server's `rank`/`score`; `total` is summed from
+    /// the other five rather than kept separately.
+    private func friendRowSeeds(game: BoardGame, on date: String) -> [RowSeed] {
+        switch game {
+        case .lineup: return lineupRowSeeds(on: date)
+        case .stars: return Self.starsRowSeeds()
+        case .duo: return Self.duoRowSeeds()
+        case .trail: return Self.trailRowSeeds()
+        case .quint: return Self.quintRowSeeds()
+        case .total: return totalRowSeeds(on: date)
+        }
+    }
+
+    private func circleRowSeeds(game: BoardGame, on date: String) -> [RowSeed] {
+        let ids: Set<String> = ["u-mum", Self.meId]
+        return friendRowSeeds(game: game, on: date).filter { ids.contains($0.user_id) }
+    }
 
     /// Mum, Sam and Dev have played; Jo has not; my row reflects whatever has been stored
-    /// for today. Four friends with three played is what `board.header` reads back as
-    /// "3 of 4 friends played today" (TESTING.md §5.3).
-    private func friendRowSeeds(on date: String) -> [RowSeed] {
+    /// for today. Yesterday Sam was faster than Mum (`prev_elapsed_ms` 26 000 vs 70 000) —
+    /// the reverse of today — so the client's rank-movement arrow has something to show;
+    /// Dev is "new" (unplayed yesterday).
+    private func lineupRowSeeds(on date: String) -> [RowSeed] {
         // Keyed off the date the client asked for, so my row reflects a submission even
         // if the device's calendar day differs from the fake's UTC one.
         let stored = storedResults[date] ?? storedResults[Self.todayDate()]
         let seeds = [
             RowSeed(user_id: "u-mum", display_name: "Mum", score: 948, tries: 1, elapsed_ms: 26_000,
                     attempts: Self.solvedAttempts(tries: 1, elapsedMs: 26_000),
-                    played: true, rank: 1, prev_rank: 3),
+                    played: true, rank: 1, prev_rank: 3,
+                    solved_count: 1, played_count: 1,
+                    prev_played: true, prev_elapsed_ms: 70_000,
+                    prev_solved_count: 1, prev_played_count: 1),
             RowSeed(user_id: "u-sam", display_name: "Sam", score: 610, tries: 2, elapsed_ms: 45_000,
                     attempts: Self.solvedAttempts(tries: 2, elapsedMs: 45_000),
-                    played: true, rank: 2, prev_rank: 1),
+                    played: true, rank: 2, prev_rank: 1,
+                    solved_count: 1, played_count: 1,
+                    prev_played: true, prev_elapsed_ms: 26_000,
+                    prev_solved_count: 1, prev_played_count: 1),
             RowSeed(user_id: "u-dev", display_name: "Dev", score: 160, tries: 3, elapsed_ms: 120_000,
                     attempts: Self.solvedAttempts(tries: 3, elapsedMs: 120_000),
-                    played: true, rank: 3, prev_rank: nil),
+                    played: true, rank: 3, prev_rank: nil,
+                    solved_count: 1, played_count: 1,
+                    prev_played: false, prev_elapsed_ms: nil,
+                    prev_solved_count: 0, prev_played_count: 0),
             RowSeed(user_id: "u-jo", display_name: "Jo", score: 0, tries: nil, elapsed_ms: nil,
-                    attempts: nil, played: false, rank: nil, prev_rank: nil),
+                    attempts: nil, played: false, rank: nil, prev_rank: nil,
+                    solved_count: 0, played_count: 0,
+                    prev_played: false, prev_elapsed_ms: nil,
+                    prev_solved_count: 0, prev_played_count: 0),
             RowSeed(user_id: Self.meId, display_name: Self.meName, score: stored?.score ?? 0,
                     tries: stored?.tries, elapsed_ms: stored?.elapsedMs, attempts: stored?.attempts,
-                    played: stored != nil, rank: stored == nil ? nil : 3, prev_rank: nil),
+                    played: stored != nil, rank: stored == nil ? nil : 3, prev_rank: nil,
+                    solved_count: stored != nil ? 1 : 0, played_count: stored != nil ? 1 : 0,
+                    prev_played: false, prev_elapsed_ms: nil,
+                    prev_solved_count: 0, prev_played_count: 0),
         ]
-        // The server returns played rows first, by score descending.
+        // The server returns played rows first, by score descending; the client re-ranks
+        // every section from `elapsed_ms`/`solved_count` regardless (docs/07), so this
+        // ordering is cosmetic only.
         return seeds.filter(\.played).sorted { $0.score > $1.score } + seeds.filter { !$0.played }
     }
 
-    private func circleRowSeeds(on date: String) -> [RowSeed] {
-        let ids: Set<String> = ["u-mum", Self.meId]
-        return friendRowSeeds(on: date).filter { ids.contains($0.user_id) }
+    /// Shared shape for Stars/Duo/Trail/Quint: Mum and Sam solve, Dev gives up today
+    /// after solving yesterday (the "gave up" / "failed" row every per-game board needs),
+    /// Jo and I have never played either day. `prevDev == nil` means Dev is "new" (also
+    /// unplayed yesterday); Stars/Duo give Dev a `prevDev`, Trail leaves it nil, so both
+    /// shapes of movement exist across the four boards. A give-up still carries a real
+    /// `elapsed_ms` — the server always records how long the attempt ran before revealing
+    /// the solution — since "All games" sums time over every played game, not just solved
+    /// ones (finding B3).
+    private static func gridGameRowSeeds(todayMum: Int, todaySam: Int, todayDev: Int,
+                                         prevMum: Int, prevSam: Int, prevDev: Int?) -> [RowSeed] {
+        [
+            RowSeed(user_id: "u-mum", display_name: "Mum", score: 100, elapsed_ms: todayMum,
+                    played: true, solved_count: 1, played_count: 1,
+                    prev_played: true, prev_elapsed_ms: prevMum,
+                    prev_solved_count: 1, prev_played_count: 1),
+            RowSeed(user_id: "u-sam", display_name: "Sam", score: 90, elapsed_ms: todaySam,
+                    played: true, solved_count: 1, played_count: 1,
+                    prev_played: true, prev_elapsed_ms: prevSam,
+                    prev_solved_count: 1, prev_played_count: 1),
+            RowSeed(user_id: "u-dev", display_name: "Dev", score: 10, elapsed_ms: todayDev,
+                    played: true, solved_count: 0, played_count: 1,
+                    prev_played: prevDev != nil, prev_elapsed_ms: prevDev,
+                    prev_solved_count: prevDev != nil ? 1 : 0, prev_played_count: prevDev != nil ? 1 : 0),
+            RowSeed(user_id: "u-jo", display_name: "Jo", score: 0,
+                    played: false, solved_count: 0, played_count: 0,
+                    prev_played: false, prev_elapsed_ms: nil,
+                    prev_solved_count: 0, prev_played_count: 0),
+            // The fake has no per-grid-game "my" data, so I show up unplayed here even in
+            // the `played` app state (unlike Lineup, whose row reflects `storedResults`).
+            RowSeed(user_id: Self.meId, display_name: Self.meName, score: 0,
+                    played: false, solved_count: 0, played_count: 0,
+                    prev_played: false, prev_elapsed_ms: nil,
+                    prev_solved_count: 0, prev_played_count: 0),
+        ]
+    }
+
+    private static func starsRowSeeds() -> [RowSeed] {
+        gridGameRowSeeds(todayMum: 40_000, todaySam: 55_000, todayDev: 80_000,
+                         prevMum: 70_000, prevSam: 30_000, prevDev: 90_000)
+    }
+
+    private static func duoRowSeeds() -> [RowSeed] {
+        gridGameRowSeeds(todayMum: 35_000, todaySam: 42_000, todayDev: 65_000,
+                         prevMum: 60_000, prevSam: 20_000, prevDev: 75_000)
+    }
+
+    private static func trailRowSeeds() -> [RowSeed] {
+        gridGameRowSeeds(todayMum: 50_000, todaySam: 65_000, todayDev: 95_000,
+                         prevMum: 80_000, prevSam: 40_000, prevDev: nil)
+    }
+
+    private static func quintRowSeeds() -> [RowSeed] {
+        gridGameRowSeeds(todayMum: 60_000, todaySam: 70_000, todayDev: 100_000,
+                         prevMum: 95_000, prevSam: 50_000, prevDev: 110_000)
+    }
+
+    /// "All games": summed from the other five boards rather than kept as its own
+    /// fixture, so it can never drift from them. `solved_count` is games solved today;
+    /// `elapsed_ms` is total time across every *played* game today, solved or given up
+    /// (docs/07 "Boards (revised 2026-09-13)": server semantics — "All games ranks by
+    /// games solved today descending, then total time ascending", and that total time is
+    /// every played game's time, not only the solved ones; finding B3).
+    private func totalRowSeeds(on date: String) -> [RowSeed] {
+        let perGame = [lineupRowSeeds(on: date), Self.starsRowSeeds(), Self.duoRowSeeds(),
+                       Self.trailRowSeeds(), Self.quintRowSeeds()]
+        let names: [(String, String)] = [
+            ("u-mum", "Mum"), ("u-sam", "Sam"), ("u-dev", "Dev"), ("u-jo", "Jo"),
+            (Self.meId, Self.meName),
+        ]
+
+        let rows: [RowSeed] = names.map { userId, name in
+            var solved = 0, played = 0, elapsed = 0
+            var hasElapsed = false
+            var prevSolved = 0, prevPlayed = 0, prevElapsed = 0
+            var hasPrevElapsed = false
+            for game in perGame {
+                guard let row = game.first(where: { $0.user_id == userId }) else { continue }
+                if (row.solved_count ?? 0) > 0 { solved += 1 }
+                if (row.played_count ?? 0) > 0 {
+                    played += 1
+                    if let ms = row.elapsed_ms {
+                        elapsed += ms
+                        hasElapsed = true
+                    }
+                }
+                if (row.prev_solved_count ?? 0) > 0 { prevSolved += 1 }
+                if (row.prev_played_count ?? 0) > 0 {
+                    prevPlayed += 1
+                    if let ms = row.prev_elapsed_ms {
+                        prevElapsed += ms
+                        hasPrevElapsed = true
+                    }
+                }
+            }
+            return RowSeed(user_id: userId, display_name: name, score: solved * 100,
+                           elapsed_ms: hasElapsed ? elapsed : nil,
+                           played: played > 0, solved_count: solved, played_count: played,
+                           prev_played: prevPlayed > 0, prev_elapsed_ms: hasPrevElapsed ? prevElapsed : nil,
+                           prev_solved_count: prevSolved, prev_played_count: prevPlayed)
+        }
+        return rows.filter(\.played).sorted { $0.score > $1.score } + rows.filter { !$0.played }
     }
 
     private static func everyoneRowSeeds() -> [RowSeed] {

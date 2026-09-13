@@ -123,34 +123,32 @@ import XCTest
         assertLabelContains(element("gameResults.score"), "100")
     }
 
-    // MARK: - 4. The board's game picker
+    // MARK: - 4. Expanding a board section
 
-    func testBoardGamePicker() {
-        let app = launch(state: "played")
+    /// docs/07 "Boards (revised 2026-09-13)": the picker/period controls are gone; the
+    /// Board tab is one expandable section per game. Quint is collapsed by default
+    /// (only "All games" starts expanded), so tapping its section header should reveal
+    /// its rows on demand.
+    ///
+    /// Mum and Sam are also friends under "All games", which is always expanded — so a
+    /// plain `board.row.u-mum` / `board.row.u-sam` existence check after expanding Quint
+    /// would pass even if Quint never rendered anything (finding B5). Instead this asserts
+    /// on Dev's "failed" row, which only exists under Quint.
+    func testBoardQuintSectionExpands() {
+        launch(state: "played")
 
         tapTab("tab.board")
 
-        // Six segments (Lineup, Stars, Duo, Trail, Quint, Total) may or may not fit the
-        // segmented control depending on the simulator's width, so `ViewThatFits` can render
-        // either the segmented form (segments already on screen) or the `Menu` form (segments
-        // revealed only after a tap) — same `board.game` identifier either way (TESTING.md
-        // §3). Stay form-agnostic rather than assuming which one is on screen.
-        let picker = awaitElement(element("board.game"), "board.game never appeared")
-        let total = app.descendants(matching: .any).matching(identifier: "Total").firstMatch
-        if !total.waitForExistence(timeout: 1) {
-            picker.tap()
-        }
-        if total.waitForExistence(timeout: KithUITestCase.timeout) {
-            total.tap()
-        } else if app.buttons["Total"].waitForExistence(timeout: KithUITestCase.timeout) {
-            app.buttons["Total"].tap()
-        } else {
-            awaitAndTap(app.menuItems["Total"], "The Total menu item never appeared")
-        }
+        awaitElement(element("board.section.total"), "board.section.total never appeared")
+        awaitElement(element("board.section.quint"), "board.section.quint never appeared")
 
-        // The fake serves the same friend rows for every column, so the board must still
-        // have rows after switching.
-        awaitElement(element("board.row.u-mum"), "board.row.u-mum never appeared on the Total board")
-        awaitElement(element("board.row.u-sam"), "board.row.u-sam never appeared on the Total board")
+        // Quint is collapsed by default; expanding it loads and reveals its rows (Mum and
+        // Sam solve every grid/Quint board in the fake, TESTING.md §2).
+        awaitAndTap(element("board.section.quint"), "board.section.quint never became tappable")
+
+        let failed = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'board.row.' AND label CONTAINS 'failed'"))
+            .firstMatch
+        awaitElement(failed, "No board row showed \"failed\" after expanding Quint")
     }
 }

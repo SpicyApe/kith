@@ -76,9 +76,8 @@ final class BootstrapTests: XCTestCase {
         XCTAssertEqual(model.engine?.phase, .playing)
     }
 
-    /// §4.3. The fake's friends board is Mum, Sam and Dev (played) plus Jo (not played),
-    /// which is the "3 of 4 friends played today" header §5.3 asserts on; my own row
-    /// makes five in total.
+    /// §4.3. The fake's friends board is Mum, Sam and Dev (played) plus Jo (not played);
+    /// my own row makes five in total.
     func testReturningBootstrapLoadsPuzzleAndBoard() async throws {
         let harness = Harness(.returning)
         defer { harness.cleanUp() }
@@ -96,10 +95,6 @@ final class BootstrapTests: XCTestCase {
         let friends = cached.filter { $0.user_id != model.myUserId }
         XCTAssertEqual(friends.count, 4)
         XCTAssertEqual(friends.filter(\.played).count, 3)
-        XCTAssertEqual(
-            model.boardHeader(kind: .friends, scopeId: nil, period: .today),
-            "3 of 4 friends played today"
-        )
         // I have not played in `returning`.
         XCTAssertFalse(model.playedToday)
     }

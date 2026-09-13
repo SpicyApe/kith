@@ -34,7 +34,8 @@ real views against an in-memory fake backend. No network, no Supabase project ne
 | Me | user id `u-me`, display name `Alex`, invite code `KITH7F3Q`, tz `UTC` |
 | Puzzle | date = today (UTC), number 142, prompt "Order these by the year they were invented", direction "Earliest at the top"; items (id, label, value, fact): 1 Bicycle 1817 "The first version had no pedals", 2 Telephone 1876 "Bell's patent came in March 1876", 3 Light bulb 1879 "Edison's carbon-filament lamp", 4 Zipper 1913 "Sundback's design is the one still used", 5 Microwave oven 1946 "Invented after a radar magnetron melted a chocolate bar"; `correctOrder` `[1,2,3,4,5]`; presentation order `[2,1,3,4,5]` (one swap from correct) |
 | Friends board (today) | Mum (`u-mum`) 948 solved 1 try, Sam (`u-sam`) 610 solved 2 tries with taunt "took me 40 seconds", Dev (`u-dev`) 160 solved 3 tries; ranks 1,2,3 with prev 3,1,nil; me: unplayed in `returning`, 520 rank 3 in `played` |
-| Everyone board | 5 rows with display names only |
+| Board rows, all games (docs/07 "Boards (revised 2026-09-13)") | `board(game:)` now returns per-game data: on Lineup, Stars, Duo, Trail and Quint alike, Mum and Sam solve today (Mum faster on Lineup, Stars, Duo, Trail; both close on Quint) with `solved_count`/`played_count`/`prev_*` set from migration 0008; Dev gives up on Stars/Duo/Trail/Quint (`played_count` 1, `solved_count` 0 — the "gave up"/"failed" row) after solving those same games yesterday, but solves Lineup outright; Jo and I have never played any of them. Yesterday's numbers swap Mum and Sam's order on every game, so the client's rank-movement arrow has both directions to show. `total` is summed from the other five, not a separate fixture. |
+| Everyone board | 5 rows with display names only; the protocol still has `board(kind: .everyone, ...)` but no view calls it since the revised boards dropped the Everyone board |
 | Circles | `Family` code `ABC123`, owner `u-mum`, members mum/me |
 | Reactions | Sam → me 🔥 in `played` |
 | Match response | matches for hashes the test sends: map the first three hashes to Mum/Sam/Dev |
@@ -64,7 +65,7 @@ reflects sign-in state.
 | Onboarding | `onboarding.phone.field`, `onboarding.phone.continue`, `onboarding.code.field`, `onboarding.code.resend`, `onboarding.name.field`, `onboarding.name.continue`, `onboarding.contacts.allow`, `onboarding.contacts.notNow`, `onboarding.friends.seeBoard`, `onboarding.friends.invite`, `onboarding.friends.createCircle`, `onboarding.notifications.yes`, `onboarding.notifications.no` |
 | Today | `today.prompt`, `today.tile.<i>` (i = 0…4; accessibility label = the item label), `today.tile.<i>.up`, `today.tile.<i>.down`, `today.lockIn`, `today.timer`, `today.tries`, `today.countdown`, `today.playedCard` |
 | Results | `results.headline`, `results.score`, `results.time`, `results.share`, `results.copy`, `results.taunt.field`, `results.rankTeaser`, `results.showFacts` |
-| Board | `board.kind` (Picker), `board.period` (Picker), `board.header`, `board.row.<userId>`, `board.empty.invite`, `board.empty.createCircle` |
+| Board | `board.kind` (Picker), `board.header`, `board.row.<userId>`, `board.empty.invite`, `board.empty.createCircle` |
 | Circles | `circles.new`, `circles.join`, `circles.join.field`, `circles.join.submit`, `circles.chip.<code>` |
 | Profile | `profile.streak`, `profile.heatmap`, `profile.inviteCode`, `profile.discoverable`, `profile.deleteAccount`, `profile.deleteConfirm` |
 | Global | `banner.configMissing`, `toast` |
@@ -79,7 +80,7 @@ identifiers above now live on the screen it pushes.
 | Grids | `stars.cell.<r>.<c>`, `duo.cell.<r>.<c>`, `trail.cell.<r>.<c>` (accessibility label "row r column c, <state>") |
 | Quint | `quint.tile.<r>.<c>` (accessibility label "row r letter c, <LETTER>, <hit\|near\|miss>"), `quint.key.<letter>`, `quint.key.enter`, `quint.key.backspace` |
 | Game results | `gameResults.headline`, `gameResults.time`, `gameResults.score`, `gameResults.share` |
-| Board | `board.game` (Picker or, below the width the six-segment control fits, a `Menu` — same identifier either way; six segments — Lineup/Stars/Duo/Trail/Quint/Total — no longer fit an iPhone-width simulator, so the hermetic UI test always sees the `Menu` form) |
+| Board | `board.section.<slug>` — one per row of the expandable list, `<slug>` a `BoardGame` raw value: `total` ("All games", expanded by default), `lineup`, `stars`, `duo`, `trail`, `quint` (collapsed by default; tapping toggles and, the first time, loads that game's rows) |
 
 `<r>` and `<c>` in the grid identifiers are the engine's **0-based** coordinates, matching
 `today.tile.<i>`; the spoken label numbers them from 1 ("row 1 column 2, empty"), which is
@@ -152,11 +153,11 @@ Method names above are the intent; match whatever `AppModel` actually exposes an
 
 1. `testOnboardingToFirstPuzzle` (`fresh`): type `+15551234567` → continue → type `123456` → name `Alex` → continue → contacts **Not now** → `today.prompt` exists and `today.tile.0` … `today.tile.4` exist; `today.lockIn` is disabled until a tile moves.
 2. `testSolveInOneTry` (`returning`): tap `today.tile.0.down` (Telephone moves below Bicycle) → `today.lockIn` enabled → tap → `results.headline` label is `Solved in 1`, `results.share` exists, `results.rankTeaser` exists.
-3. `testBoardShowsFriends` (`played`): tap `tab.board` → `board.row.u-mum`, `board.row.u-sam`, `board.row.u-dev` exist; `board.header` label is `3 of 4 friends played today`; a row labelled `You` exists.
+3. `testBoardShowsFriends` (`played`): tap `tab.board` → (the "All games" section is expanded by default) `board.row.u-mum`, `board.row.u-sam`, `board.row.u-dev` exist; `board.header` label contains `Friends`; a row labelled `You` exists.
 4. `testAlreadyPlayedShowsCountdown` (`played`): `today.playedCard` and `today.countdown` exist.
 5. `testJoinCircleByCode` (`returning`): `tab.circles` → `circles.join` → type `KITH-ABC123` → `circles.join.submit` → `circles.chip.ABC123` exists.
 6. `testProfileShowsStreak` (`played`): `tab.you` → `profile.streak` label contains `12`, `profile.inviteCode` label contains `KITH7F3Q`.
-7. `testEveryoneBoardDisablesPeriod` (`played`): `tab.board` → select Everyone in `board.kind` → `board.period` is disabled.
+7. `testBoardSectionsExpand` (`played`): `tab.board` → `board.section.total` ("All games") is expanded by default with rows already visible → tap `board.section.stars` → `board.row.*` rows appear under it.
 
 ## 6. CI
 

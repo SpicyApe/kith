@@ -54,7 +54,7 @@ with a forced snake) so UI tests can solve them by tapping cells in a known orde
   board cache keyed by game.
 - `KithUITests` (hermetic): `testHubListsFourGames`, `testSolveFakeStars` (tap the five
   star cells → `game.done` → `gameResults.headline` "Solved"), `testGiveUpDuo`,
-  `testBoardGamePicker` (select Total, rows exist).
+  `testBoardQuintSectionExpands` (expand Quint, Dev's "failed" row appears).
 - `KithLiveTests`: after Lineup, open Stars from the hub, tap "Give up" (solving a real
   8×8 blind is not feasible in a test), confirm, assert `gameResults.headline` "Gave up",
   then continue to the board and profile steps.

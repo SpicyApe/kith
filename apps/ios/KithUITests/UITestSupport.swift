@@ -175,7 +175,7 @@ import XCTest
     }
 
     /// Waits for an element to become disabled, then asserts it is. Same reasoning as
-    /// `awaitEnabled`, for the other direction (`board.period` after picking Everyone).
+    /// `awaitEnabled`, for the other direction.
     func awaitDisabled(_ element: XCUIElement,
                        _ message: String? = nil,
                        timeout: TimeInterval = KithUITestCase.timeout,

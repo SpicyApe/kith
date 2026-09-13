@@ -300,24 +300,6 @@ final class GamesTests: XCTestCase {
         XCTAssertTrue(harness.api.calls.contains("board(friends,today,total)"))
     }
 
-    /// `BoardDisplayRow` carries no time, so the grid-game boards read it back off the raw
-    /// cached rows instead; the friends seed (TESTING.md §2) gives Mum/Sam/Dev distinct
-    /// times and leaves Jo unplayed.
-    func testElapsedMsByUserOnAGridGameBoard() async throws {
-        let harness = await ready()
-        defer { harness.cleanUp() }
-        let model = harness.model
-
-        await model.refreshBoard(kind: .friends, scopeId: nil, period: .today, game: .stars)
-
-        let elapsed = model.elapsedMsByUser(kind: .friends, scopeId: nil, period: .today, game: .stars)
-
-        XCTAssertEqual(elapsed["u-mum"], 26_000)
-        XCTAssertEqual(elapsed["u-sam"], 45_000)
-        XCTAssertEqual(elapsed["u-dev"], 120_000)
-        XCTAssertNil(elapsed["u-jo"], "Jo hasn't played, so there is no time to show")
-    }
-
     // MARK: The other two engines
 
     func testFakeDuoLeavesSixBlanksAndCompletes() async throws {

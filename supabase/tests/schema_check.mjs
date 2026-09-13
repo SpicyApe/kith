@@ -27,6 +27,7 @@ await db.exec(sql);
 await db.exec(fs.readFileSync(new URL("../migrations/0004_revoke_wrappers_from_anon.sql", import.meta.url), "utf8"));
 await db.exec(fs.readFileSync(new URL("../migrations/0006_games.sql", import.meta.url), "utf8"));
 await db.exec(fs.readFileSync(new URL("../migrations/0007_quint.sql", import.meta.url), "utf8"));
+await db.exec(fs.readFileSync(new URL("../migrations/0008_board_prev_score.sql", import.meta.url), "utf8"));
 console.log("migration: OK (0001 + 0004 + 0006 + 0007)");
 
 const A = "11111111-1111-1111-1111-111111111111";
@@ -70,6 +71,20 @@ const names = board.rows.map((r) => r.display_name);
 if (!(names.includes("Alex") && names.includes("Sam") && !names.includes("Casey"))) throw new Error("friends board should be Alex+Sam only");
 const alex = board.rows.find((r) => r.display_name === "Alex");
 if (alex.rank !== 1 || alex.prev_rank !== 2) throw new Error(`Alex rank/prev_rank wrong: ${JSON.stringify(alex)}`);
+// 0008: the previous window (yesterday for period 'today') comes back alongside.
+{
+  const wide = await db.query(`select display_name, score, elapsed_ms, played_count, solved_count, prev_score, prev_played, prev_elapsed_ms, prev_played_count, prev_solved_count from public.board('friends', null, 'today', '${today}')`);
+  const a = wide.rows.find((r) => r.display_name === "Alex");
+  if (!a || a.prev_played !== true || typeof a.prev_score !== "number" || a.prev_score <= 0 || a.prev_elapsed_ms === null
+      || a.played_count !== 1 || a.prev_played_count !== 1) {
+    throw new Error(`board prev_* columns wrong: ${JSON.stringify(a)}`);
+  }
+  const unplayed = wide.rows.find((r) => !r.prev_played);
+  if (unplayed && (unplayed.prev_score !== 0 || unplayed.prev_elapsed_ms !== null || unplayed.prev_played_count !== 0)) {
+    throw new Error(`unplayed prev_* should be 0/null/0: ${JSON.stringify(unplayed)}`);
+  }
+  console.log("board prev_* columns ok");
+}
 
 const week = await db.query(`select display_name, score, rank from public.board('friends', null, 'week', '${today}')`);
 console.table(week.rows);
