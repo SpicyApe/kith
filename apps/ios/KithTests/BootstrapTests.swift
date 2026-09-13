@@ -22,6 +22,34 @@ final class BootstrapTests: XCTestCase {
     }
 
     /// §4.2
+    /// A number typed the way people write them — "(571) 341-0690", "571.341.0690",
+    /// "1 571 341 0690" — is sent to Supabase as E.164, and the same E.164 string is used
+    /// for verify. Garbage is refused before any network call.
+    func testSendCodeNormalisesFormattedNumbers() async throws {
+        let harness = Harness(.fresh)
+        defer { harness.cleanUp() }
+        let model = harness.model
+        await harness.boot()
+
+        for raw in ["(571) 341-0690", "571.341.0690", "1 571 341 0690", "+1 (571) 341-0690"] {
+            model.phoneDraft = raw
+            await model.sendCode()
+            XCTAssertEqual(model.phoneE164, "+15713410690", "for \(raw)")
+            XCTAssertEqual(model.onboarding.step, .code(phone: "+15713410690"), "for \(raw)")
+            XCTAssertEqual(harness.auth.calls.last, "sendCode(+15713410690)", "for \(raw)")
+        }
+
+        XCTAssertEqual(AppModel.normalizedPhone("(571) 341-0690", region: "US"), "+15713410690")
+        XCTAssertEqual(AppModel.normalizedPhone("020 7946 0958", region: "GB"), "+442079460958")
+        XCTAssertNil(AppModel.normalizedPhone("hello", region: "US"))
+        XCTAssertNil(AppModel.normalizedPhone("12345", region: "US"))
+
+        let callsBefore = harness.auth.calls.count
+        model.phoneDraft = "call me"
+        await model.sendCode()
+        XCTAssertEqual(harness.auth.calls.count, callsBefore, "garbage must not reach sendCode")
+    }
+
     func testVerifyThenSaveNameLoadsToday() async throws {
         let harness = Harness(.fresh)
         defer { harness.cleanUp() }

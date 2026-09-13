@@ -1393,16 +1393,30 @@ final class AppModel {
 
     // MARK: - Onboarding
 
+    /// The number as Supabase Auth needs it: E.164, no spaces, dashes, dots or parentheses,
+    /// with the device region's calling code added when the person typed no "+". The same
+    /// normaliser the contact matcher uses (KithCore `BasicPhoneNormalizer`), so
+    /// "(571) 341-0690" on a US phone becomes "+15713410690" and matches its own hash.
+    /// `nil` when the input cannot be a phone number at all.
+    static func normalizedPhone(_ raw: String, region: String = ContactsService.region) -> String? {
+        BasicPhoneNormalizer().e164(raw, defaultRegion: region)
+    }
+
+    /// The E.164 form of `phoneDraft` once `sendCode` has accepted it; `verifyCode` and
+    /// `resendCode` must send exactly the string the code was sent to.
+    var phoneE164: String?
+
     func sendCode() async {
-        let phone = phoneDraft.trimmingCharacters(in: .whitespaces)
-        guard phone.count >= 8 else {
-            show(toast: "That number looks too short.", isError: true)
+        guard let phone = Self.normalizedPhone(phoneDraft) else {
+            show(toast: "That doesn't look like a phone number. Include your area code, e.g. (555) 123-4567.",
+                 isError: true)
             return
         }
         isBusy = true
         defer { isBusy = false }
         do {
             try await auth.sendCode(phone: phone)
+            phoneE164 = phone
             onboarding.apply(.phoneEntered(phone))
             resendAvailableAt = Date().addingTimeInterval(30)
             codeDraft = ""
@@ -1416,7 +1430,7 @@ final class AppModel {
         isBusy = true
         defer { isBusy = false }
         do {
-            try await auth.sendCode(phone: phoneDraft)
+            try await auth.sendCode(phone: phoneE164 ?? phoneDraft)
             self.resendAvailableAt = Date().addingTimeInterval(30)
             show(toast: "Code sent.", isError: false)
         } catch {
@@ -1430,7 +1444,7 @@ final class AppModel {
         isBusy = true
         defer { isBusy = false }
         do {
-            myUserId = try await auth.verify(phone: phoneDraft, code: code) ?? ""
+            myUserId = try await auth.verify(phone: phoneE164 ?? phoneDraft, code: code) ?? ""
             onboarding.apply(.codeVerified)
             stage = .registering
             // Returning user: the row already exists, skip straight to the puzzle.
@@ -1628,6 +1642,7 @@ final class AppModel {
         onboarding = OnboardingFlow()
         tail = .none
         phoneDraft = ""
+        phoneE164 = nil
         codeDraft = ""
         nameDraft = ""
         tab = .today
