@@ -168,11 +168,13 @@ import XCTest
         let gaveUp = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH 'board.row.' AND label CONTAINS 'gave up'"))
             .firstMatch
+        scrollUntilExists(gaveUp)
         awaitElement(gaveUp, "No board row showed \"gave up\" after expanding Stars")
 
         let mumStars = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH 'board.row.' AND label CONTAINS '0:40'"))
             .firstMatch
+        scrollUntilExists(mumStars)
         awaitElement(mumStars, "No board row showed Mum's Stars time (0:40) after expanding Stars")
     }
 }

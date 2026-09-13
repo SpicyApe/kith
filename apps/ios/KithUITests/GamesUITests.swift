@@ -152,6 +152,7 @@ import XCTest
         let failed = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH 'board.row.' AND label CONTAINS 'failed'"))
             .firstMatch
+        scrollUntilExists(failed)
         awaitElement(failed, "No board row showed \"failed\" after expanding Quint")
     }
 }
