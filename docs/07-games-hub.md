@@ -137,10 +137,10 @@ Mistakes on the results screen = wrong guesses.
 
 ### Words
 `supabase/functions/_shared/games/words.ts` and `packages/GridGames/Sources/GridGames/Words.swift`
-hold identical lists: `ANSWERS` (1,373 common words in frequency order, from the Google
+hold identical lists: `ANSWERS` (about 750 common words in frequency order, from the top-10,000 band of the Google
 Trillion Word corpus list intersected with ENABLE, minus plurals, simple past forms and a
 blocklist) and `ALLOWED` (all 8,636). Regenerate: fetch `enable1.txt` (dolph/dictionary) and
-`20k.txt` (first20hours/google-10000-english), keep `^[a-z]{5}$` words in ENABLE in
+`google-10000-english-usa-no-swears.txt` (first20hours/google-10000-english), keep `^[a-z]{5}$` words in ENABLE in
 frequency order, drop `…s` with a 4-letter stem in ENABLE, `…ed`/`…ly` with a stem in ENABLE,
 and the blocklist (slurs, sexual and medical terms, and a hand list of first names, surnames, places and brands), cap at 1,500.
 
