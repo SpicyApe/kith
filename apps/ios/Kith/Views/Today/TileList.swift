@@ -47,27 +47,26 @@ struct TileList: View {
         #endif
     }
 
+    /// A step skips over locked tiles: once tries have locked the middle of the board,
+    /// "down" from the top tile has to land on the next *unlocked* slot or it is a no-op
+    /// (the live test found exactly that after two tries). `nil` = no such slot.
+    static func nextUnlocked(from index: Int, step: Int, locked: Set<Int>) -> Int? {
+        var slot = index + step
+        while slot >= 0 && slot < LineupEngine.tileCount {
+            if !locked.contains(slot) { return slot }
+            slot += step
+        }
+        return nil
+    }
+
     var body: some View {
         let locked = engine.lockedPositions
         let names = labels
 
-        // A step skips over locked tiles: once tries have locked the middle of the board,
-        // "down" from the top tile has to land on the next *unlocked* slot or it is a
-        // no-op (the live test found exactly that after two tries). `nil` = no such slot.
-        let count = LineupEngine.tileCount
-        func nextUnlocked(from index: Int, step: Int) -> Int? {
-            var slot = index + step
-            while slot >= 0 && slot < count {
-                if !locked.contains(slot) { return slot }
-                slot += step
-            }
-            return nil
-        }
-
         List {
             ForEach(Array(engine.currentOrder.enumerated()), id: \.element) { index, itemId in
-                let up = nextUnlocked(from: index, step: -1)
-                let down = nextUnlocked(from: index, step: 1)
+                let up = Self.nextUnlocked(from: index, step: -1, locked: locked)
+                let down = Self.nextUnlocked(from: index, step: 1, locked: locked)
                 TileRow(
                     label: names[itemId] ?? "",
                     position: index,
