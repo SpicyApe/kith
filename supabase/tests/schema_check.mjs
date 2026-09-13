@@ -26,7 +26,8 @@ await db.exec(`
 await db.exec(sql);
 await db.exec(fs.readFileSync(new URL("../migrations/0004_revoke_wrappers_from_anon.sql", import.meta.url), "utf8"));
 await db.exec(fs.readFileSync(new URL("../migrations/0006_games.sql", import.meta.url), "utf8"));
-console.log("migration: OK (0001 + 0004 + 0006)");
+await db.exec(fs.readFileSync(new URL("../migrations/0007_quint.sql", import.meta.url), "utf8"));
+console.log("migration: OK (0001 + 0004 + 0006 + 0007)");
 
 const A = "11111111-1111-1111-1111-111111111111";
 const B = "22222222-2222-2222-2222-222222222222";
@@ -36,6 +37,7 @@ const today = new Date().toISOString().slice(0, 10);
 const yest = new Date(Date.now() - 86400e3).toISOString().slice(0, 10);
 const twoAgo = new Date(Date.now() - 2 * 86400e3).toISOString().slice(0, 10);
 const tomorrow = new Date(Date.now() + 86400e3).toISOString().slice(0, 10);
+const todayPlus2 = new Date(Date.now() + 2 * 86400e3).toISOString().slice(0, 10);
 
 await db.exec(`
   insert into auth.users values ('${A}'),('${B}'),('${C}'),('${D}');
@@ -1046,6 +1048,68 @@ if (bridgeStreak.rows[0].n !== 2) {
   throw new Error(`streak: expected 2 for Lineup-yesterday + game_results-today bridging, got ${bridgeStreak.rows[0].n}`);
 }
 console.log("streak(): played_on() bridges Lineup yesterday with a grid game today - OK, streak=2");
+
+// ---------------------------------------------------------------------------
+// Quint (migrations/0007_quint.sql): 'quint' accepted by daily_games/game_starts/
+// game_results, start_game('quint'), and board(..., 'quint'/'total').
+// ---------------------------------------------------------------------------
+await db.exec(`
+  insert into public.daily_games (date, game, number, spec, solution, difficulty) values
+    ('${today}', 'quint', 1, '{"n":5,"guesses":6,"answer":"crane"}'::jsonb, '{"word":"crane"}'::jsonb, 'medium');
+`);
+console.log("quint: daily_games row inserts - OK");
+
+await db.exec(`set role app; set app.uid = '${B}';`);
+const quintStart = await db.query(`select public.start_game('${today}', 'quint') as p`);
+const quintStartJson = quintStart.rows[0].p;
+if (quintStartJson.game !== "quint" || !Object.hasOwn(quintStartJson, "spec")) {
+  throw new Error(`start_game('quint'): expected a quint spec, got ${JSON.stringify(quintStartJson)}`);
+}
+if (Object.hasOwn(quintStartJson, "solution")) throw new Error("start_game('quint'): must never expose the solution");
+console.log("quint: start_game('quint') returns spec, no solution - OK");
+await db.exec(`reset role`);
+
+await db.exec(`
+  insert into public.game_results (user_id, date, game, elapsed_ms, elapsed_source, mistakes, solved, gave_up, score, tz) values
+    ('${A}', '${today}', 'quint', 20000, 'server', 2, true, false, 900, 'UTC');
+`);
+await db.exec(`set role app; set app.uid = '${A}';`);
+const quintBoard = await db.query(
+  `select user_id, score from public.board('friends', null, 'today', '${today}', 'quint')`,
+);
+const quintBoardA = quintBoard.rows.find((r) => r.user_id === A);
+if (!quintBoardA || quintBoardA.score !== 900) {
+  throw new Error(`board(..., 'quint'): expected A's score 900, got ${JSON.stringify(quintBoard.rows)}`);
+}
+console.log("quint: board(..., 'quint') includes A's result - OK");
+
+const totalWithQuint = await db.query(
+  `select score from public.board('friends', null, 'today', '${today}', 'total') where user_id = '${A}'`,
+);
+if (totalWithQuint.rows[0].score !== totalA.score + 900) {
+  throw new Error(
+    `board(..., 'total') with quint: expected ${totalA.score + 900}, got ${totalWithQuint.rows[0].score}`,
+  );
+}
+console.log("quint: board(..., 'total') sums in A's quint score - OK");
+await db.exec(`reset role`);
+
+// A quint row scheduled 2 days ahead (as generate-puzzles' fill-ahead now leaves in
+// place so recentQuintWords can see it) must stay outside the +/-14h window and stay
+// invisible to a non-admin app caller, same as any other out-of-window daily_games row.
+await db.exec(`
+  insert into public.daily_games (date, game, number, spec, solution, difficulty) values
+    ('${todayPlus2}', 'quint', 9998, '{"n":5,"guesses":6,"answer":"stone"}'::jsonb, '{"word":"stone"}'::jsonb, 'medium');
+`);
+await db.exec(`set role app; set app.uid = '${B}';`);
+const futureQuintHiddenFromApp = await db.query(
+  `select 1 from public.daily_games where date = '${todayPlus2}' and game = 'quint'`,
+);
+if (futureQuintHiddenFromApp.rows.length !== 0) {
+  throw new Error("RLS: a quint row for today+2 must be hidden from a non-admin app caller");
+}
+console.log("quint: today+2 daily_games row hidden from non-admin app caller - OK");
+await db.exec(`reset role`);
 
 // ---------------------------------------------------------------------------
 // delete_account

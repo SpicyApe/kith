@@ -117,18 +117,31 @@ machine, so none of this has seen a compiler).
    the same code; the unit test drives the overload because a simulator has no contacts
    permission.
 
+## Visual design
+
+The games hub and the Lineup screens follow **[`docs/08-visual-design.md`](../../../docs/08-visual-design.md)**:
+flat high-contrast tiles, bold rounded numerals, one strong colour per game, thick region
+outlines, almost no chrome. Every colour and size comes from `Theme` (`Views/GameTheme.swift`,
+distinct from the older `Views/Shared/Theme.swift`), built dynamic light/dark via
+`Color(uiColor: UIColor { trait in … })`. The three grid boards are flush cells (zero
+spacing) with the region/divider/border line system drawn once, above the cells, by
+`GridMetrics.lineOverlay(regions:)` — not per-cell borders, which would double up at
+shared edges. `GridMetrics.spacing(for:base:)` is unused by the grids now that they are
+flush; it stays in case a future screen needs the old gapped layout.
+
 ## Games hub
 
 Built from `apps/ios/PLAN-games.md` against `docs/07-games-hub.md`. New files:
 
 | File | What it does |
 |---|---|
-| `Model/GameSession.swift` | `GameEngine` (the `stars`/`duo`/`trail` engine enum), `ActiveGame`, `GameStat`. |
-| `Views/Today/HubView.swift` | The Today tab: streak + countdown header, four rows, `NavigationStack` that pushes the play screens. `HubDestination` lives here. |
-| `Views/Games/GameHostView.swift` | Shared chrome: nav-bar timer, Reset / Give up / Done, the give-up confirmation, the results cover. |
-| `Views/Games/GridMetrics.swift` | Cell geometry (touch → `GridPoint`, `GridPoint` → centre) and the 12-colour / 12-glyph region palette. |
-| `Views/Games/StarsView.swift`, `DuoView.swift`, `TrailView.swift` | The three grids. |
-| `Views/Games/GameResultsView.swift` | Headline / score / time / share-row preview / streak / rank teaser / Share + Copy. |
+| `Model/GameSession.swift` | `GameEngine` (the `stars`/`duo`/`trail`/`quint` engine enum), `ActiveGame`, `GameStat`. |
+| `Views/Today/HubView.swift` | The Today tab: streak + countdown header, five rows, `NavigationStack` that pushes the play screens. `HubDestination` lives here. |
+| `Views/Games/GameHostView.swift` | Shared chrome: nav-bar timer, Reset / Give up / Done, the give-up confirmation, the results cover. Reset is hidden for Quint (a guess cannot be undone). |
+| `Views/Games/GridMetrics.swift` | Cell geometry (touch → `GridPoint`, `GridPoint` → centre) and the 12-colour / 12-glyph region palette, shared by the three square grids. |
+| `Views/Games/StarsView.swift`, `DuoView.swift`, `TrailView.swift` | The three square grids. |
+| `Views/Games/QuintView.swift` | The Wordle-style fifth game: a 6×5 tile grid (not square, so it does not use `GridMetrics`/`gridBoardChrome()`) with a per-tile flip reveal and a three-row on-screen keyboard. |
+| `Views/Games/GameResultsView.swift` | Headline / score / time / share-row preview / streak / rank teaser / Share + Copy. Quint's subtitle and share text show guess progress ("Quint #12 · 4/6") instead of a grid size. |
 
 `GameResultsView.close()` (its "Done" button) only flips `model.showGameResults` to
 `false` now — it used to also call `dismiss()` on its own `@Environment(\.dismiss)`, racing
@@ -141,9 +154,18 @@ it runs after the cover's own dismissal has started rather than alongside it.
 `HubView` pushes it now. `AppModel` gained `dailyGames`, `gameResults`, `myGameResults`,
 `activeGames: [GameKind: ActiveGame]`, `showGameResults`, `gamePendingSync`, the
 start/finish/give-up/reset methods, the per-move mutators (`starsCycle`, `starsPaintCross`,
-`duoCycle`, `trailExtend`, `trailRetract`), the `QueuedGameResult` queue, and a `game:`
-parameter on `BoardCacheKey`, `rows`, `boardHeader` and `refreshBoard` (defaulted to
-`.lineup`, so no existing call site or test changed).
+`duoCycle`, `trailExtend`, `trailRetract`, `quintType`, `quintBackspace`, `quintSubmit`),
+the `QueuedGameResult` queue, and a `game:` parameter on `BoardCacheKey`, `rows`,
+`boardHeader` and `refreshBoard` (defaulted to `.lineup`, so no existing call site or test
+changed).
+
+Quint is the odd one out among the four grid games: it has no conflict concept (a bad guess
+is simply refused or rejected as not-a-word rather than booking a mistake), it can finish
+"not solved" without a give-up (a sixth wrong guess), and its score depends on the guess
+count as well as the time (`GameScoring.quintScore`, not the other three games'
+`GameScoring.score`). `AppModel.submitGame`/`localGameResult`/`queueGame` all take an
+explicit `solved:` argument for this reason, rather than assuming (as they safely can for
+Stars/Duo/Trail) that any non-give-up finish is a solve.
 
 `activeGames` is a dictionary, not a single slot, so opening a second grid game while the
 first is unfinished cannot silently discard it (a reviewer finding against the original
@@ -228,9 +250,12 @@ exercises this in `GamesTests`.
   An earlier revision hard-coded `.segmented` on the theory that every iPhone portrait width
   is compact enough to fit five six-character labels; a reviewer flagged that as fragile
   against Dynamic Type and narrower devices, so it now falls back to a `Menu` (same
-  `board.game` identifier either way) when the segmented control does not fit. Segmented is
-  listed first in `ViewThatFits` specifically so the CI simulator's width keeps taking that
-  branch and `testBoardGamePicker`'s `picker.buttons["Total"]` lookup stays valid.
+  `board.game` identifier either way) when the segmented control does not fit. Segmented was
+  listed first in `ViewThatFits` specifically so the CI simulator's width kept taking that
+  branch — but Quint's addition made it a six-segment control (Lineup/Stars/Duo/Trail/
+  Quint/Total), which no longer fits an iPhone-width simulator at all, so `ViewThatFits` now
+  always falls through to the `Menu` there. `GamesUITests.testBoardGamePicker` opens the
+  menu and taps its "Total" item rather than looking for `segmentedControls["board.game"]`.
 - **The fake Duo grid is not exactly the six rows the brief listed.** `100011` (row 2) has
   three consecutive ●, which is illegal in Tango, and the columns force that row given the
   other five — so the grid as specified can never be completed. A brute force over all 11 222
@@ -241,7 +266,7 @@ exercises this in `GamesTests`.
   taps trivial to state in TESTING.md.
 - **`gameResults` is keyed `"<date>#<game>"` as planned, but is populated from two shapes** —
   `submitGame`'s `StoredGameResult` directly, and `myGameResults`'s `GameResultSummary` via
-  the bridge above (with `mistakes: 0`, since that column is not in the summary select).
+  the bridge above (`mistakes` included, since `myGameResults`'s select carries that column).
 - **The offline queue holds an array, not a single entry.** Three grid games can be played
   in one offline session; Lineup's single-slot `queuedResult` is unchanged.
 - **A played game's host screen shows a read-only card instead of re-starting the puzzle**,

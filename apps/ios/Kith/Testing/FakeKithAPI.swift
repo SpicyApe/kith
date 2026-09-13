@@ -654,11 +654,20 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         TrailSpec(n: 3, waypoints: [[0, 0], [1, 1], [2, 2]])
     }
 
+    /// Quint's answer (docs/07 §Quint, TESTING.md §3): "crane". `slate` then `crane` is the
+    /// two-guess solve `GamesTests`/`GamesUITests` drive.
+    static let quintAnswer = "crane"
+
+    static func quintSpec() -> QuintSpec {
+        QuintSpec(answer: quintAnswer)
+    }
+
     static func spec(for game: GameKind) -> GameSpec {
         switch game {
         case .stars: return .stars(starsSpec())
         case .duo: return .duo(duoSpec())
         case .trail: return .trail(trailSpec())
+        case .quint: return .quint(quintSpec())
         }
     }
 
@@ -668,6 +677,7 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         case .stars: return 12
         case .duo: return 13
         case .trail: return 14
+        case .quint: return 3
         }
     }
 
@@ -682,6 +692,7 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         var date: String
         var game: GameKind
         var elapsed_ms: Int
+        var mistakes: Int
         var solved: Bool
         var gave_up: Bool
         var score: Int
@@ -794,15 +805,38 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
                                 message: "You've already played that one today.")
         }
 
+        // Quint (docs/07 §Quint wire formats): the server never trusts the client's own
+        // `solved`/`mistakes` — both are recomputed from the submitted guesses, and a
+        // give-up carries no guesses to validate.
+        var solved = !gaveUp
+        var storedMistakes = mistakes
+        let score: Int
+        if game == .quint {
+            var guesses: [String] = []
+            if case .quint(let submitted)? = answer { guesses = submitted }
+            if !gaveUp {
+                guard (1...6).contains(guesses.count), guesses.allSatisfy({ $0.count == 5 }) else {
+                    throw KithError.api(status: 400, code: "bad_answer", message: "Invalid guesses.")
+                }
+            }
+            solved = !gaveUp && guesses.last == Self.quintAnswer
+            storedMistakes = guesses.filter { $0 != Self.quintAnswer }.count
+            let totalGuesses = storedMistakes + (solved ? 1 : 0)
+            score = GameScoring.quintScore(elapsedMs: elapsedMs, guesses: totalGuesses,
+                                           solved: solved, gaveUp: gaveUp)
+        } else {
+            score = GameScoring.score(elapsedMs: elapsedMs, gaveUp: gaveUp)
+        }
+
         let seed = StoredGameSeed(
             date: date,
             game: game,
             elapsedMs: elapsedMs,
             elapsedSource: startedGames.contains(key) ? "server" : "client",
-            mistakes: mistakes,
-            solved: !gaveUp,
+            mistakes: storedMistakes,
+            solved: solved,
             gaveUp: gaveUp,
-            score: GameScoring.score(elapsedMs: elapsedMs, gaveUp: gaveUp),
+            score: score,
             submittedAt: Self.timestamp()
         )
         storedGames[key] = seed
@@ -819,7 +853,8 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
             .filter { $0.date >= sinceDate }
             .map { stored in
                 GameResultSeed(date: stored.date, game: stored.game, elapsed_ms: stored.elapsedMs,
-                               solved: stored.solved, gave_up: stored.gaveUp, score: stored.score)
+                               mistakes: stored.mistakes, solved: stored.solved,
+                               gave_up: stored.gaveUp, score: stored.score)
             }
             .sorted { ($0.date, $0.game.rawValue) < ($1.date, $1.game.rawValue) }
         return try Self.convert(seeds, to: [GameResultSummary].self)
@@ -858,6 +893,9 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         case .stars(let columns): return "{\"stars\":\(flat(columns))}"
         case .duo(let cells): return "{\"cells\":\(nested(cells))}"
         case .trail(let path): return "{\"path\":\(nested(path))}"
+        case .quint(let guesses):
+            let quoted = guesses.map { "\"\($0)\"" }.joined(separator: ",")
+            return "{\"guesses\":[\(quoted)]}"
         }
     }
 

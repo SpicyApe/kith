@@ -47,6 +47,15 @@ final class GamesTests: XCTestCase {
         XCTAssertEqual(started.spec.kind, .trail)
     }
 
+    func testStartedGameDecodesQuintSpec() throws {
+        let started = try decode(StartedGame.self, """
+        {"date":"2026-09-11","game":"quint","number":12,"difficulty":"medium",
+         "spec":{"n":5,"guesses":6,"answer":"crane"}}
+        """)
+        XCTAssertEqual(started.spec, .quint(QuintSpec(n: 5, guesses: 6, answer: "crane")))
+        XCTAssertEqual(started.spec.kind, .quint)
+    }
+
     func testStartedGameRejectsAMismatchedSpec() {
         // `game` says "stars" but `spec` has Trail's shape.
         XCTAssertThrowsError(try decode(StartedGame.self, """
@@ -74,5 +83,10 @@ final class GamesTests: XCTestCase {
     func testGameAnswerEncodesTrail() throws {
         let data = try JSONEncoder().encode(GameAnswer.trail([[0, 0], [0, 1]]))
         XCTAssertEqual(String(data: data, encoding: .utf8), #"{"path":[[0,0],[0,1]]}"#)
+    }
+
+    func testGameAnswerEncodesQuint() throws {
+        let data = try JSONEncoder().encode(GameAnswer.quint(["slate", "crane"]))
+        XCTAssertEqual(String(data: data, encoding: .utf8), #"{"guesses":["slate","crane"]}"#)
     }
 }

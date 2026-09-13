@@ -496,3 +496,131 @@ Deno.test("handleSubmitGame - both touchUser and streak failing still returns 20
   assertEquals(body.streak, 0);
   assertEquals(body.result.solved, true);
 });
+
+// ---------------------------------------------------------------------------
+// quint (docs/07-games-hub.md §"Quint"): a different stored-solution check
+// (validateQuint's own verdict, not a JSON.stringify match against
+// stored.solution), mistakes recomputed from wrongGuesses, and quintScore.
+// ---------------------------------------------------------------------------
+
+const QUINT_SPEC = { n: 5, guesses: 6, answer: "crane" };
+const QUINT_SOLUTION = { word: "crane" };
+
+function seedQuint(store: FakeSubmitGameStore, date: string): void {
+  store.seedGame(date, "quint", QUINT_SPEC, QUINT_SOLUTION, GAME_NUMBER);
+}
+
+Deno.test("handleSubmitGame - quint: solved in 3 guesses, mistakes=2, score via quintScore", async () => {
+  const store = new FakeSubmitGameStore();
+  const date = "2026-09-11";
+  seedQuint(store, date);
+  store.seedStart("user-1", date, "quint", NOW);
+
+  const outcome = await handleSubmitGame(
+    {
+      date,
+      game: "quint",
+      tz: "UTC",
+      elapsedMs: 30_000,
+      mistakes: 999, // must be ignored: real mistakes = wrongGuesses = 2
+      gaveUp: false,
+      answer: { guesses: ["slate", "grape", "crane"] },
+    },
+    ctx(),
+    store,
+  );
+  const body = assertOk(outcome, 201);
+  assertEquals(body.result.solved, true);
+  assertEquals(body.result.gaveUp, false);
+  assertEquals(body.result.mistakes, 2);
+  // quintScore(30_000, 3, true, false) = 1000 - 100*2 - 30 = 770.
+  assertEquals(body.result.score, 770);
+});
+
+Deno.test("handleSubmitGame - quint: six-guess fail stores solved=false, gaveUp=false, score=100, mistakes=6", async () => {
+  const store = new FakeSubmitGameStore();
+  const date = "2026-09-11";
+  seedQuint(store, date);
+  store.seedStart("user-1", date, "quint", NOW);
+
+  const guesses = ["slate", "grape", "chase", "brine", "prone", "shale"];
+  const outcome = await handleSubmitGame(
+    { date, game: "quint", tz: "UTC", elapsedMs: 200_000, mistakes: 0, gaveUp: false, answer: { guesses } },
+    ctx(),
+    store,
+  );
+  const body = assertOk(outcome, 201);
+  assertEquals(body.result.solved, false);
+  assertEquals(body.result.gaveUp, false);
+  assertEquals(body.result.mistakes, 6);
+  assertEquals(body.result.score, 100);
+});
+
+Deno.test("handleSubmitGame - quint: give-up preserves the client's clamped mistakes, solved=false, gaveUp=true, score=100", async () => {
+  const store = new FakeSubmitGameStore();
+  const date = "2026-09-11";
+  seedQuint(store, date);
+  store.seedStart("user-1", date, "quint", NOW);
+
+  const outcome = await handleSubmitGame(
+    { date, game: "quint", tz: "UTC", elapsedMs: 45_000, mistakes: 3, gaveUp: true },
+    ctx(),
+    store,
+  );
+  const body = assertOk(outcome, 201);
+  assertEquals(body.result.solved, false);
+  assertEquals(body.result.gaveUp, true);
+  assertEquals(body.result.mistakes, 3);
+  assertEquals(body.result.score, 100);
+});
+
+Deno.test("handleSubmitGame - quint: not-a-word guess -> 422 wrong_answer, no result written", async () => {
+  const store = new FakeSubmitGameStore();
+  const userId = "user-quint-notaword";
+  const date = "2026-09-11";
+  seedQuint(store, date);
+
+  const outcome = await handleSubmitGame(
+    { date, game: "quint", tz: "UTC", elapsedMs: 1000, mistakes: 0, gaveUp: false, answer: { guesses: ["zzzzz"] } },
+    ctx({ userId }),
+    store,
+  );
+  const err = assertErr(outcome, 422, "wrong_answer");
+  assertEquals(err.error, "not_a_word");
+  assertEquals(await store.getResult(userId, date, "quint"), null);
+});
+
+Deno.test("handleSubmitGame - quint: a guess after the solving one -> 422 wrong_answer 'after_solved'", async () => {
+  const store = new FakeSubmitGameStore();
+  const date = "2026-09-11";
+  seedQuint(store, date);
+
+  const outcome = await handleSubmitGame(
+    {
+      date,
+      game: "quint",
+      tz: "UTC",
+      elapsedMs: 1000,
+      mistakes: 0,
+      gaveUp: false,
+      answer: { guesses: ["crane", "slate"] },
+    },
+    ctx(),
+    store,
+  );
+  const err = assertErr(outcome, 422, "wrong_answer");
+  assertEquals(err.error, "after_solved");
+});
+
+Deno.test("handleSubmitGame - quint: no_start still applies (409 before scoring)", async () => {
+  const store = new FakeSubmitGameStore();
+  const date = "2026-09-11";
+  seedQuint(store, date);
+
+  const outcome = await handleSubmitGame(
+    { date, game: "quint", tz: "UTC", elapsedMs: 1000, mistakes: 0, gaveUp: false, answer: { guesses: ["crane"] } },
+    ctx(),
+    store,
+  );
+  assertErr(outcome, 409, "no_start");
+});

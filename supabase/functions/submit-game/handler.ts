@@ -9,6 +9,7 @@ import type { GameKind } from "../_shared/games/common.ts";
 import { asObject, dateWithinWindow, err, isValidTimeZone } from "../_shared/context.ts";
 import { GAME_KINDS, scoreFor } from "../_shared/games/common.ts";
 import { validateAnswer } from "../_shared/games/generate.ts";
+import { quintScore, validateQuint, type QuintSpec } from "../_shared/games/quint.ts";
 import { clampElapsed } from "../submit-result/handler.ts";
 
 export interface SubmitGameRequest {
@@ -63,12 +64,19 @@ export class SubmitGameStoreError extends Error {
  * 2. `date` within ±14 h of now → else 400 `bad_date`. 3. `tz` valid → else 400 `bad_tz`.
  * 4. Existing result → 409 `already_played` with `detail` = existing.
  * 5. Game row → else 404 `no_puzzle`.
- * 6. If !gaveUp: `validateAnswer(game, spec, answer)`; not ok → 422 with code `wrong_answer` and the reason as `error`.
- *    Otherwise (rules pass), the answer must also match `stored.solution` exactly
+ * 6. If !gaveUp: for quint, `validateQuint(spec, answer)` — not ok → 422 `wrong_answer` with the
+ *    reason as `error`; otherwise solved = verdict.solved and mistakes = verdict.wrongGuesses
+ *    (the body's `mistakes` is ignored — quint has no separate "matches stored.solution" check,
+ *    since the submitted `{guesses}` shape differs from the stored `{word}` solution and
+ *    validateQuint already proves correctness against `spec.answer`). For every other game,
+ *    `validateAnswer(game, spec, answer)`; not ok → 422 with code `wrong_answer` and the reason as
+ *    `error`. Otherwise (rules pass), the answer must also match `stored.solution` exactly
  *    (`JSON.stringify` equality) → else 422 `wrong_answer` "mismatch". solved = !gaveUp.
  * 7. `store.getStart(...)` → no row → 409 `no_start` "start the game first" (the client must call
  *    `start_game` before submitting). Otherwise elapsed: `clampElapsed(elapsedMs, now − start)`
- *    (import from ../submit-result/handler.ts); score = `scoreFor(clampedMs, gaveUp)`.
+ *    (import from ../submit-result/handler.ts); score = `scoreFor(clampedMs, gaveUp)`, or for
+ *    quint, `quintScore(clampedMs, guesses.length, solved, gaveUp)` (a six-guess fail scores 100
+ *    and stores `solved: false, gaveUp: false`, same as any other unsolved quint submission).
  * 8. insertResult; duplicate race → 409 `already_played` (re-read for detail).
  * 9. touchUser and streak, both best-effort (errors logged, streak defaults to 0).
  * 10. 201 `{ result, streak }`.
@@ -96,7 +104,7 @@ export async function handleSubmitGame(
   ) {
     return err(400, "bad_request", "date, game, tz, elapsedMs, mistakes, gaveUp are required");
   }
-  const mistakes = Math.min(999, Math.max(0, Math.floor(mistakesRaw)));
+  let mistakes = Math.min(999, Math.max(0, Math.floor(mistakesRaw)));
 
   if (!dateWithinWindow(date, ctx.now)) {
     return err(400, "bad_date", "date is outside the allowed window");
@@ -115,16 +123,28 @@ export async function handleSubmitGame(
     return err(404, "no_puzzle", "no approved game for this date");
   }
 
+  let solved = !gaveUp;
+  let quintGuessCount = 0;
+
   if (!gaveUp) {
-    const verdict = validateAnswer(game, stored.spec, b.answer);
-    if (!verdict.ok) {
-      return err(422, "wrong_answer", verdict.reason ?? "shape");
-    }
-    if (JSON.stringify(b.answer) !== JSON.stringify(stored.solution)) {
-      return err(422, "wrong_answer", "mismatch");
+    if (game === "quint") {
+      const verdict = validateQuint(stored.spec as QuintSpec, b.answer);
+      if (!verdict.ok) {
+        return err(422, "wrong_answer", verdict.reason ?? "shape");
+      }
+      solved = verdict.solved ?? false;
+      mistakes = verdict.wrongGuesses ?? 0;
+      quintGuessCount = (b.answer as { guesses: string[] }).guesses.length;
+    } else {
+      const verdict = validateAnswer(game, stored.spec, b.answer);
+      if (!verdict.ok) {
+        return err(422, "wrong_answer", verdict.reason ?? "shape");
+      }
+      if (JSON.stringify(b.answer) !== JSON.stringify(stored.solution)) {
+        return err(422, "wrong_answer", "mismatch");
+      }
     }
   }
-  const solved = !gaveUp;
 
   const start = await store.getStart(ctx.userId, date, game);
   if (start === null) {
@@ -132,7 +152,9 @@ export async function handleSubmitGame(
   }
   const serverMs = ctx.now.getTime() - start.getTime();
   const clamped = clampElapsed(elapsedRaw, serverMs);
-  const score = scoreFor(clamped.elapsedMs, gaveUp);
+  const score = game === "quint"
+    ? quintScore(clamped.elapsedMs, quintGuessCount, solved, gaveUp)
+    : scoreFor(clamped.elapsedMs, gaveUp);
 
   const submittedAt = ctx.now;
   try {

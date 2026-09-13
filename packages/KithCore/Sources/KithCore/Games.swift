@@ -8,7 +8,7 @@ import GridGames
 
 /// Which leaderboard column to show; mirrors `board(..., game_kind)`.
 public enum BoardGame: String, Sendable, Codable, CaseIterable, Equatable {
-    case lineup, stars, duo, trail, total
+    case lineup, stars, duo, trail, quint, total
 }
 
 /// Decoded from `start_game(d, g)`: `{ "date", "game", "number", "difficulty", "spec" }`.
@@ -49,6 +49,8 @@ public struct StartedGame: Decodable, Sendable, Equatable {
                 spec = .duo(try container.decode(DuoSpec.self, forKey: .spec))
             case .trail:
                 spec = .trail(try container.decode(TrailSpec.self, forKey: .spec))
+            case .quint:
+                spec = .quint(try container.decode(QuintSpec.self, forKey: .spec))
             }
         } catch {
             throw DecodingError.dataCorrupted(DecodingError.Context(
@@ -70,12 +72,14 @@ public enum GameSpec: Sendable, Equatable {
     case stars(StarsSpec)
     case duo(DuoSpec)
     case trail(TrailSpec)
+    case quint(QuintSpec)
 
     public var kind: GameKind {
         switch self {
         case .stars: return .stars
         case .duo: return .duo
         case .trail: return .trail
+        case .quint: return .quint
         }
     }
 }
@@ -86,9 +90,11 @@ public enum GameAnswer: Encodable, Sendable, Equatable {
     case stars([Int])
     case duo([[Int]])
     case trail([[Int]])
+    /// Quint: the guesses made, lowercase, in order (docs/07 §Quint wire formats).
+    case quint([String])
 
     private enum CodingKeys: String, CodingKey {
-        case stars, cells, path
+        case stars, cells, path, guesses
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -100,6 +106,8 @@ public enum GameAnswer: Encodable, Sendable, Equatable {
             try container.encode(cells, forKey: .cells)
         case .trail(let path):
             try container.encode(path, forKey: .path)
+        case .quint(let guesses):
+            try container.encode(guesses, forKey: .guesses)
         }
     }
 }
@@ -127,6 +135,9 @@ public struct GameResultSummary: Codable, Sendable, Equatable {
     public let date: String
     public let game: GameKind
     public let elapsed_ms: Int
+    /// Wrong guesses for Quint (drives "Solved in k" and the `k/6` share progress); the
+    /// grid games' mistake count otherwise.
+    public let mistakes: Int
     public let solved: Bool
     public let gave_up: Bool
     public let score: Int

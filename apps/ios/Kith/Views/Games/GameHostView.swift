@@ -1,8 +1,10 @@
-// GameHostView.swift — shared chrome for Stars, Duo and Trail (PLAN-games.md "Screens").
+// GameHostView.swift — shared chrome for Stars, Duo, Trail and Quint (PLAN-games.md
+// "Screens", docs/08-visual-design.md §"Game host chrome").
 //
-// The navigation bar carries the running timer; the trailing group carries Reset, a
-// destructive "Give up" behind a confirmation dialog, and a "Done" that only appears once
-// the engine reports the grid complete. Submission and all state live in `AppModel`.
+// The navigation bar carries the game name and the running timer, plus a help button that
+// presents a short rules sheet. Below the board, Reset / Give up sit in a bordered row;
+// Done appears alongside them once the engine reports the grid complete. Submission and
+// all state live in `AppModel`.
 
 import Foundation
 import GridGames
@@ -17,6 +19,7 @@ struct GameHostView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showGiveUpConfirm = false
+    @State private var showRules = false
     /// Set once the results cover has been shown, so dismissing it pops back to the hub
     /// rather than leaving a finished grid on screen.
     @State private var sawResults = false
@@ -38,7 +41,17 @@ struct GameHostView: View {
         @Bindable var model = model
 
         VStack(spacing: 16) {
-            content
+            // Quint's board plus its three-row keyboard can run taller than an SE screen;
+            // a ScrollView keeps every key hittable rather than letting the keyboard get
+            // clipped or squeezed (finding C10). The other three games' square boards
+            // already fit, so they stay unwrapped.
+            if kind == .quint {
+                ScrollView {
+                    content
+                }
+            } else {
+                content
+            }
         }
         .padding(.horizontal, hostHorizontalPadding)
         .padding(.top, 8)
@@ -55,17 +68,23 @@ struct GameHostView: View {
                     timer
                 }
             }
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                if game?.engine.isComplete == true, game?.finished == nil {
-                    doneButton
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showRules = true
+                } label: {
+                    Image(systemName: "questionmark.circle")
                 }
-                resetButton
-                giveUpButton
+                .frame(minWidth: 44, minHeight: 44)
+                .accessibilityLabel("\(kind.title) rules")
+                .accessibilityIdentifier("game.help")
             }
         }
         // A method rather than a body inside `.task`: that closure is `@Sendable` and does
         // not inherit this view's `@MainActor` isolation, so the hop is the `await` on this.
         .task { await start() }
+        .sheet(isPresented: $showRules) {
+            GameRulesSheet(kind: kind)
+        }
         .confirmationDialog(
             "Give up on \(kind.title)?",
             isPresented: $showGiveUpConfirm,
@@ -114,7 +133,7 @@ struct GameHostView: View {
             playedCard(stored)
         } else if let game {
             grid(for: game)
-            footer(for: game)
+            controls(for: game)
         } else if !model.isAvailable(kind) && !model.isBusy {
             unavailable
         } else if let error = model.activeGameErrors[kind] {
@@ -156,22 +175,32 @@ struct GameHostView: View {
             DuoView(engine: engine)
         case .trail(let engine):
             TrailView(engine: engine)
+        case .quint(let engine):
+            QuintView(engine: engine)
         }
     }
 
-    private func footer(for game: ActiveGame) -> some View {
-        VStack(spacing: 6) {
-            Text(Self.rules(for: kind))
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-
+    /// Below the board: the mistake count (if any), then the Reset / Give up / Done row
+    /// (docs/08-visual-design.md §"Game host chrome").
+    private func controls(for game: ActiveGame) -> some View {
+        VStack(spacing: 10) {
             if game.mistakes > 0 {
                 Text(game.mistakes == 1 ? "1 mistake" : "\(game.mistakes) mistakes")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
+            }
+
+            HStack(spacing: 12) {
+                // Quint has no Reset: a guess cannot be taken back once submitted
+                // (docs/08-visual-design.md §"Quint").
+                if game.kind != .quint {
+                    resetButton
+                }
+                giveUpButton
+                if game.engine.isComplete, game.finished == nil {
+                    doneButton
+                }
             }
         }
         .frame(maxWidth: .infinity)
@@ -224,7 +253,10 @@ struct GameHostView: View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             Text(AppModel.clock(elapsedMs))
                 .font(.subheadline.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.ink)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(Theme.paperMuted, in: Capsule())
                 .accessibilityLabel("Elapsed time \(AppModel.clock(elapsedMs))")
                 .accessibilityIdentifier("game.timer")
         }
@@ -236,14 +268,19 @@ struct GameHostView: View {
         return game?.elapsedMs ?? 0
     }
 
+    // MARK: Bottom row
+
     private var doneButton: some View {
         Button {
             Task { await model.finishGame() }
         } label: {
-            Label("Done", systemImage: "checkmark.circle.fill")
+            Text("Done")
+                .font(.headline)
+                .foregroundStyle(Color.white)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(Theme.color(for: kind), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .disabled(game?.isFinishing == true)
-        .frame(minWidth: 44, minHeight: 44)
         .accessibilityLabel("Done, submit this grid")
         .accessibilityIdentifier("game.done")
     }
@@ -252,10 +289,13 @@ struct GameHostView: View {
         Button {
             model.resetGame()
         } label: {
-            Label("Reset", systemImage: "arrow.counterclockwise")
+            Text("Reset")
+                .font(.headline)
+                .foregroundStyle(Theme.ink)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(Theme.paperMuted, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .disabled(game == nil || game?.finished != nil)
-        .frame(minWidth: 44, minHeight: 44)
         .accessibilityLabel("Reset the grid")
         .accessibilityIdentifier("game.reset")
     }
@@ -264,26 +304,210 @@ struct GameHostView: View {
         Button(role: .destructive) {
             showGiveUpConfirm = true
         } label: {
-            Label("Give up", systemImage: "flag.fill")
+            Text("Give up")
+                .font(.headline)
+                .foregroundStyle(Theme.danger)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Theme.danger.opacity(0.4), lineWidth: 1)
+                )
         }
         .disabled(game == nil || game?.finished != nil)
-        .frame(minWidth: 44, minHeight: 44)
         // Deliberately not just "Give up": the confirmation dialog's own destructive button
         // is titled "Give up", and two buttons with the same label make a UI test ambiguous.
         .accessibilityLabel("Give up on this game")
         .accessibilityIdentifier("game.giveUp")
     }
 
-    // MARK: Copy
+}
 
-    static func rules(for kind: GameKind) -> String {
+/// `game.help`'s sheet: three rule bullets per game (docs/07-games-hub.md) and a small
+/// static 3×3 example rendered with the same cell styles the real grids use.
+@MainActor
+private struct GameRulesSheet: View {
+    let kind: GameKind
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(Self.bullets(for: kind), id: \.self) { bullet in
+                            HStack(alignment: .top, spacing: 10) {
+                                SwiftUI.Circle()
+                                    .fill(Theme.color(for: kind))
+                                    .frame(width: 6, height: 6)
+                                    .padding(.top, 7)
+                                Text(bullet)
+                                    .font(.body)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+
+                    example
+                        .frame(height: 160)
+                        .frame(maxWidth: .infinity)
+                }
+                .padding(20)
+            }
+            .navigationTitle("\(kind.title) rules")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private var example: some View {
+        GeometryReader { proxy in
+            let side = min(proxy.size.width, proxy.size.height, 160)
+            RulesExampleGrid(kind: kind, side: side)
+                .frame(width: side, height: side)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        }
+    }
+
+    static func bullets(for kind: GameKind) -> [String] {
         switch kind {
         case .stars:
-            return "One star in every row, column and colour. No two stars may touch. Tap to cycle; drag to mark ✕."
+            return [
+                "Place exactly one star in every row, column and colour region.",
+                "No two stars may touch, including diagonally.",
+                "Tap a cell to cycle empty → ✕ → ★; drag to mark several cells ✕ at once.",
+            ]
         case .duo:
-            return "Three of each symbol in every row and column, never three alike in a row. Tap to cycle."
+            return [
+                "Fill every row and column with three ● and three ◆ — never three of the same symbol in a row.",
+                "A badge on the shared edge of two cells means = (same) or × (different).",
+                "Tap a cell to cycle empty → ● → ◆.",
+            ]
         case .trail:
-            return "Draw one path through every cell, visiting the numbers in order. Drag from the end of the path."
+            return [
+                "Draw one path through every cell of the grid without crossing itself.",
+                "Visit the numbered waypoints in order, starting at 1.",
+                "Drag from the end of the path into an adjacent cell; drag back to retract.",
+            ]
+        case .quint:
+            return [
+                "Guess the five-letter word in six tries. Every guess must be a real word.",
+                "Each guess turns green for the right letter in the right place, yellow for the " +
+                "right letter in the wrong place, and gray for a letter that isn't in the word.",
+                "The keyboard shows each letter's best result so far. No hard mode.",
+            ]
         }
+    }
+}
+
+/// A fixed, non-interactive 3×3 illustration using the same fills, lines and marks as the
+/// real grid views, purely for the rules sheet.
+@MainActor
+private struct RulesExampleGrid: View {
+    let kind: GameKind
+    let side: CGFloat
+
+    private static let starsRegions = [[0, 0, 1], [0, 1, 1], [2, 2, 1]]
+
+    var body: some View {
+        let metrics = GridMetrics(size: 3, spacing: 0, side: side)
+        ZStack {
+            VStack(spacing: 0) {
+                ForEach(0..<3, id: \.self) { row in
+                    HStack(spacing: 0) {
+                        ForEach(0..<3, id: \.self) { column in
+                            cell(row: row, column: column, metrics: metrics)
+                        }
+                    }
+                }
+            }
+            metrics.lineOverlay(regions: kind == .stars ? Self.starsRegions : nil)
+        }
+        .gridBoardChrome()
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func cell(row: Int, column: Int, metrics: GridMetrics) -> some View {
+        switch kind {
+        case .stars:
+            ZStack {
+                Theme.region(Self.starsRegions[row][column])
+                if row == 0, column == 2 {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: max(9, metrics.cell * 0.56)))
+                        .foregroundStyle(Theme.ink)
+                } else if row == 1, column == 0 {
+                    Image(systemName: "xmark")
+                        .font(.system(size: max(8, metrics.cell * 0.34), weight: .semibold))
+                        .foregroundStyle(Theme.ink.opacity(0.4))
+                }
+            }
+            .frame(width: metrics.cell, height: metrics.cell)
+            .clipped()
+        case .duo:
+            ZStack {
+                Theme.paper
+                if row == 0, column == 0 {
+                    Image(systemName: "circle.fill")
+                        .font(.system(size: max(9, metrics.cell * 0.52)))
+                        .foregroundStyle(Theme.duo)
+                } else if row == 0, column == 2 {
+                    Image(systemName: "diamond.fill")
+                        .font(.system(size: max(9, metrics.cell * 0.52)))
+                        .foregroundStyle(Theme.duoAlt)
+                }
+            }
+            .frame(width: metrics.cell, height: metrics.cell)
+            .clipped()
+        case .trail:
+            ZStack {
+                Theme.paper
+                if row == 0, column == 0 {
+                    waypoint("1", metrics: metrics)
+                } else if row == 2, column == 2 {
+                    waypoint("2", metrics: metrics)
+                }
+            }
+            .frame(width: metrics.cell, height: metrics.cell)
+            .clipped()
+        case .quint:
+            ZStack {
+                Theme.paper
+                if row == 0, column == 0 {
+                    quintTile("C", fill: Theme.trail, text: Color.white, metrics: metrics)
+                } else if row == 0, column == 1 {
+                    quintTile("R", fill: Theme.duo, text: Color.white, metrics: metrics)
+                } else if row == 0, column == 2 {
+                    quintTile("X", fill: Theme.paperMuted, text: Theme.ink, metrics: metrics)
+                }
+            }
+            .frame(width: metrics.cell, height: metrics.cell)
+            .clipped()
+        }
+    }
+
+    private func quintTile(_ letter: String, fill: Color, text: Color, metrics: GridMetrics) -> some View {
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
+            .fill(fill)
+            .overlay(
+                Text(letter)
+                    .font(.system(size: max(9, metrics.cell * 0.4), weight: .black, design: .rounded))
+                    .foregroundStyle(text)
+            )
+            .frame(width: metrics.cell * 0.78, height: metrics.cell * 0.78)
+    }
+
+    private func waypoint(_ text: String, metrics: GridMetrics) -> some View {
+        Text(text)
+            .font(.system(size: max(9, metrics.cell * 0.4), weight: .bold, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(Color.white)
+            .frame(width: metrics.cell * 0.66, height: metrics.cell * 0.66)
+            .background(SwiftUI.Circle().fill(Theme.ink))
     }
 }

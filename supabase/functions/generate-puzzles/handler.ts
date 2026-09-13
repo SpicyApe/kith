@@ -289,6 +289,14 @@ export interface GenerateStore {
   nextGameNumber(game: GameKind): Promise<number>;
   insertGame(date: string, g: GeneratedGame, number: number): Promise<void>;
   /**
+   * Quint solutions' words (`daily_games.solution->>'word'`) from any row within 365 days
+   * before `fromDate`, with no upper bound — a word already scheduled for a future date counts
+   * as recent too. When `excludeDate` is given, that date's own row is left out (used by the
+   * single-game reseed path, which is about to replace that date's word and shouldn't count it
+   * against itself).
+   */
+  recentQuintWords(fromDate: string, excludeDate?: string): Promise<Set<string>>;
+  /**
    * Replace spec/solution/difficulty/seed for an existing (date, game); throws `code: "not_found"`
    * if absent, or `code: "has_results"` if anyone has already played it (`game_results` has a row
    * for that date+game) — reseeding would invalidate a submitted result.
@@ -352,10 +360,11 @@ export async function handleGenerate(
     const game = req.game;
     const key = `${date}#${game}`;
     const cur = await store.gameSeedOf(date, game);
+    const context = game === "quint" ? { recentWords: await store.recentQuintWords(date, date) } : undefined;
     let generated: GeneratedGame | null = null;
     for (let attempt = 1; attempt <= 20 && generated === null; attempt++) {
       if (gameSeedFor(date, game, attempt) === cur) continue;
-      generated = generateDailyGame(game, date, attempt);
+      generated = generateDailyGame(game, date, attempt, context);
     }
     if (generated === null) {
       games.skipped.push(key);
@@ -443,6 +452,9 @@ export async function handleGenerate(
       nextGameNumber.set(game, await store.nextGameNumber(game));
     }
   }
+  // Quint must not repeat a word used in the last 365 days; grown in-memory as new
+  // quint games are generated below so a single fill run doesn't repeat one either.
+  const recentQuintWords = daysAhead > 0 ? await store.recentQuintWords(from) : new Set<string>();
 
   for (let i = 0; i < daysAhead; i++) {
     const date = addDaysUTC(today, i);
@@ -456,9 +468,10 @@ export async function handleGenerate(
       }
 
       try {
+        const context = game === "quint" ? { recentWords: recentQuintWords } : undefined;
         let generated: GeneratedGame | null = null;
         for (let attempt = 0; attempt < 5 && generated === null; attempt++) {
-          generated = generateDailyGame(game, date, attempt);
+          generated = generateDailyGame(game, date, attempt, context);
         }
         if (generated === null) {
           games.skipped.push(key);
@@ -468,6 +481,9 @@ export async function handleGenerate(
         await store.insertGame(date, generated, number);
         nextGameNumber.set(game, number + 1);
         games.created.push(key);
+        if (game === "quint") {
+          recentQuintWords.add((generated.solution as { word: string }).word);
+        }
       } catch (e) {
         console.error("game_failed", key, (e as Error).message);
         games.skipped.push(key);

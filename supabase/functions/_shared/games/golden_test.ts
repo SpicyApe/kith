@@ -18,6 +18,7 @@ interface GoldenCase {
   elapsedMs: number;
   gaveUp: boolean;
   refCode: string | null;
+  quintProgress?: string;
   shareText: string;
 }
 
@@ -30,6 +31,9 @@ function wrapAnswer(game: GameKind, answer: unknown): unknown {
       return { cells: answer };
     case "trail":
       return { path: answer };
+    case "quint":
+      // Already in wire-format shape ({ guesses: [...] }) in the fixture.
+      return answer;
   }
 }
 
@@ -46,6 +50,10 @@ function solutionFor(game: GameKind, answer: unknown): unknown {
       return { cells: answer };
     case "trail":
       return null;
+    case "quint":
+      // shareRowsFor's quint case reads `{ guesses }` from the played answer, not the
+      // puzzle's `{ word }` solution.
+      return answer;
   }
 }
 
@@ -57,8 +65,12 @@ Deno.test("golden vectors: validateAnswer, shareRowsFor and gameShareText agree 
   const raw = await Deno.readTextFile(url);
   const cases = JSON.parse(raw) as GoldenCase[];
 
-  if (cases.length < 3) {
-    throw new Error(`expected at least 3 golden cases, got ${cases.length}`);
+  if (cases.length < 6) {
+    throw new Error(`expected at least 6 golden cases, got ${cases.length}`);
+  }
+  const quintCases = cases.filter((c) => c.game === "quint");
+  if (quintCases.length < 3) {
+    throw new Error(`expected at least 3 quint golden cases (solved, fail, give-up), got ${quintCases.length}`);
   }
 
   for (const c of cases) {
@@ -68,7 +80,7 @@ Deno.test("golden vectors: validateAnswer, shareRowsFor and gameShareText agree 
     const rows = shareRowsFor(c.game, c.spec, solutionFor(c.game, c.answer));
     assertEquals(rows, c.shareRows, `${c.game} #${c.number}: shareRowsFor mismatch`);
 
-    const text = gameShareText(c.game, c.number, c.elapsedMs, c.gaveUp, rows, c.refCode);
+    const text = gameShareText(c.game, c.number, c.elapsedMs, c.gaveUp, rows, c.refCode, c.quintProgress);
     assertEquals(text, c.shareText, `${c.game} #${c.number}: gameShareText mismatch`);
   }
 });

@@ -72,25 +72,41 @@ struct ResultsView: View {
     private func outcome(_ summary: ResultsSummary) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(summary.headline)
-                .font(.largeTitle.weight(.bold))
+                .font(.system(.largeTitle, design: .rounded, weight: .bold))
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("results.headline")
-            // Score and time are labelled individually rather than collapsed into one
-            // element, so `results.score` and `results.time` are both addressable.
-            HStack(alignment: .firstTextBaseline, spacing: 16) {
-                Text("\(summary.score)")
-                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                    .monospacedDigit()
-                    .accessibilityLabel("Score \(summary.score)")
-                    .accessibilityIdentifier("results.score")
-                Text(summary.timeText)
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .accessibilityLabel("Time \(summary.timeText)")
-                    .accessibilityIdentifier("results.time")
-            }
+
+            statColumns(summary)
         }
+    }
+
+    /// Three stat columns — Time, Score, Tries — matching the grid games' results layout
+    /// (docs/08-visual-design.md §"Results (grid games)": "the results screen gets the
+    /// three-column stat layout above").
+    private func statColumns(_ summary: ResultsSummary) -> some View {
+        HStack(spacing: 0) {
+            statColumn(summary.timeText, label: "Time")
+                .accessibilityLabel("Time \(summary.timeText)")
+                .accessibilityIdentifier("results.time")
+            statColumn("\(summary.score)", label: "Score")
+                .accessibilityLabel("Score \(summary.score)")
+                .accessibilityIdentifier("results.score")
+            statColumn("\(summary.grid.count)", label: "Tries")
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func statColumn(_ value: String, label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.system(size: 34, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(Theme.ink)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     /// docs/03 §3: the five items in correct order, each "label · value · fact".

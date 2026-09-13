@@ -29,6 +29,7 @@ struct QueuedGameResult: Codable, Sendable, Equatable {
     var stars: [Int]?
     var cells: [[Int]]?
     var path: [[Int]]?
+    var guesses: [String]?
 
     init(date: String, game: GameKind, tz: String, elapsedMs: Int, mistakes: Int,
          gaveUp: Bool, answer: GameAnswer?) {
@@ -42,6 +43,7 @@ struct QueuedGameResult: Codable, Sendable, Equatable {
         case .stars(let value): self.stars = value
         case .duo(let value): self.cells = value
         case .trail(let value): self.path = value
+        case .quint(let value): self.guesses = value
         case nil: break
         }
     }
@@ -51,6 +53,7 @@ struct QueuedGameResult: Codable, Sendable, Equatable {
         if let stars { return .stars(stars) }
         if let cells { return .duo(cells) }
         if let path { return .trail(path) }
+        if let guesses { return .quint(guesses) }
         return nil
     }
 }

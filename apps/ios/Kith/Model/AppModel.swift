@@ -96,6 +96,7 @@ enum HubGame: Hashable, Sendable, CaseIterable {
         case .grid(.stars): return .stars
         case .grid(.duo): return .duo
         case .grid(.trail): return .trail
+        case .grid(.quint): return .quint
         }
     }
 }
@@ -626,7 +627,7 @@ final class AppModel {
         "\(date)#\(game.rawValue)"
     }
 
-    /// `game_results` rows arrive as `GameResultSummary` (six columns) but the hub and the
+    /// `game_results` rows arrive as `GameResultSummary` (seven columns) but the hub and the
     /// results screen both read `StoredGameResult`. KithCore's wire structs have no public
     /// memberwise init, so the two are bridged the same way `FakeKithAPI` bridges its seeds:
     /// encode a local struct with identical field names and decode the real type.
@@ -644,7 +645,7 @@ final class AppModel {
         }
         return decode(
             Seed(date: summary.date, game: summary.game, elapsedMs: summary.elapsed_ms,
-                 elapsedSource: "server", mistakes: 0, solved: summary.solved,
+                 elapsedSource: "server", mistakes: summary.mistakes, solved: summary.solved,
                  gaveUp: summary.gave_up, score: summary.score, submittedAt: ""),
             as: StoredGameResult.self
         )
@@ -682,8 +683,17 @@ final class AppModel {
         case .grid(let kind):
             if let stored = result(for: kind) {
                 if stored.gaveUp { return "Gave up" }
+                if kind == .quint {
+                    let guesses = Self.quintGuessesUsed(stored)
+                    return stored.solved
+                        ? "Solved in \(guesses) · \(Self.clock(stored.elapsedMs))"
+                        : "Failed · \(guesses) guesses"
+                }
                 if stored.solved { return "Solved · \(Self.clock(stored.elapsedMs))" }
                 return "Not solved"
+            }
+            if kind == .quint {
+                return isAvailable(kind) ? "Five letters, six guesses" : "Not available today"
             }
             return isAvailable(kind) ? "Not played" : "Not available today"
         }
@@ -722,9 +732,11 @@ final class AppModel {
     }
 
     /// Clears the grid and starts the player over. The clock deliberately keeps running:
-    /// the server clamps elapsed against `game_starts` anyway (docs/07).
+    /// the server clamps elapsed against `game_starts` anyway (docs/07). Quint has no
+    /// Reset: guesses cannot be undone (docs/08), so the host hides the button and this
+    /// guards the model side too.
     func resetGame() {
-        guard var active = activeGame, active.finished == nil else { return }
+        guard var active = activeGame, active.finished == nil, active.kind != .quint else { return }
         active.engine.reset()
         active.moves += 1
         activeGame = active
@@ -811,6 +823,55 @@ final class AppModel {
         }
     }
 
+    /// Appends a letter to Quint's current row. Not routed through `applyMove`: Quint has
+    /// no conflict concept, so there is nothing for that helper's mistake-booking to do.
+    func quintType(_ letter: Character) {
+        guard var active = activeGame, !active.isFinishing, active.finished == nil,
+              case .quint(let current) = active.engine else { return }
+        var quint = current
+        guard quint.type(letter) else { return }
+        active.engine = .quint(quint)
+        activeGame = active
+    }
+
+    func quintBackspace() {
+        guard var active = activeGame, !active.isFinishing, active.finished == nil,
+              case .quint(let current) = active.engine else { return }
+        var quint = current
+        quint.backspace()
+        active.engine = .quint(quint)
+        activeGame = active
+    }
+
+    /// Submits Quint's current row. `mistakes` is kept as `wrongGuesses` after every
+    /// accepted guess (docs/07: "Mistakes on the results screen = wrong guesses"), a
+    /// `.notAWord` outcome bumps `quintShake` so `QuintView` can animate it, and an
+    /// `.accepted` guess that completes the puzzle (solved or six wrong guesses) hands off
+    /// to `finishGame()` — the same completion path Done uses for the other three games.
+    @discardableResult
+    func quintSubmit() -> QuintEngine.SubmitOutcome {
+        guard var active = activeGame, !active.isFinishing, active.finished == nil,
+              case .quint(let current) = active.engine else { return .tooShort }
+        var quint = current
+        let outcome = quint.submit()
+        switch outcome {
+        case .accepted:
+            active.engine = .quint(quint)
+            active.mistakes = quint.wrongGuesses
+            active.moves += 1
+            activeGame = active
+            if quint.isComplete {
+                Task { await self.finishGame() }
+            }
+        case .notAWord:
+            active.quintShake += 1
+            activeGame = active
+        case .tooShort, .finished:
+            break
+        }
+        return outcome
+    }
+
     // MARK: Finishing
 
     /// Submits the completed grid. Does nothing while the engine says it is not complete.
@@ -836,8 +897,19 @@ final class AppModel {
         isBusy = true
         defer { isBusy = false }
 
+        // Quint can finish "not solved" without giving up (a sixth wrong guess), unlike the
+        // other three games where any non-give-up finish is by definition solved — so the
+        // local/offline fallback result needs the engine's own verdict rather than `!gaveUp`.
+        let solved: Bool
+        if case .quint(let engine) = game.engine {
+            solved = engine.isSolved
+        } else {
+            solved = !gaveUp
+        }
+
         game.finished = await submitGame(kind: kind, elapsedMs: elapsed, mistakes: game.mistakes,
-                                         gaveUp: gaveUp, answer: answer, retryNoStart: true)
+                                         gaveUp: gaveUp, answer: answer, retryNoStart: true,
+                                         solved: solved)
 
         game.isFinishing = false
         activeGames[kind] = game
@@ -857,7 +929,8 @@ final class AppModel {
     ///   against looping if the retry also comes back `no_start`);
     /// - anything else → queued for `retryQueuedGames`.
     private func submitGame(kind: GameKind, elapsedMs: Int, mistakes: Int, gaveUp: Bool,
-                            answer: GameAnswer?, retryNoStart: Bool) async -> StoredGameResult? {
+                            answer: GameAnswer?, retryNoStart: Bool,
+                            solved: Bool) async -> StoredGameResult? {
         do {
             let response = try await api.submitGame(
                 date: today, game: kind, tz: tz, elapsedMs: elapsedMs,
@@ -870,26 +943,31 @@ final class AppModel {
             if case .api(_, let code, _) = error, code == "already_played" {
                 await refreshGameResults()
                 return result(for: kind) ?? Self.localGameResult(
-                    date: today, game: kind, elapsedMs: elapsedMs, mistakes: mistakes, gaveUp: gaveUp
+                    date: today, game: kind, elapsedMs: elapsedMs, mistakes: mistakes,
+                    gaveUp: gaveUp, solved: solved
                 )
             }
             if case .api(_, let code, _) = error, code == "no_start", retryNoStart {
                 _ = try? await api.startGame(date: today, game: kind)
                 return await submitGame(kind: kind, elapsedMs: elapsedMs, mistakes: mistakes,
-                                        gaveUp: gaveUp, answer: answer, retryNoStart: false)
+                                        gaveUp: gaveUp, answer: answer, retryNoStart: false,
+                                        solved: solved)
             }
             return queueGame(kind: kind, elapsedMs: elapsedMs, mistakes: mistakes,
-                             gaveUp: gaveUp, answer: answer)
+                             gaveUp: gaveUp, answer: answer, solved: solved)
         } catch {
             return queueGame(kind: kind, elapsedMs: elapsedMs, mistakes: mistakes,
-                             gaveUp: gaveUp, answer: answer)
+                             gaveUp: gaveUp, answer: answer, solved: solved)
         }
     }
 
     /// The result the UI shows while a submission is still queued. Score is computed with
     /// the same rule the server uses (`GameScoring`), so the number does not jump on sync.
+    /// `solved` comes from the caller rather than being derived from `gaveUp` here: for the
+    /// three grid games any non-give-up finish is solved by construction, but Quint can also
+    /// finish "not solved" (a sixth wrong guess) without giving up.
     private static func localGameResult(date: String, game: GameKind, elapsedMs: Int,
-                                        mistakes: Int, gaveUp: Bool) -> StoredGameResult? {
+                                        mistakes: Int, gaveUp: Bool, solved: Bool) -> StoredGameResult? {
         struct Seed: Encodable {
             let date: String
             let game: GameKind
@@ -901,18 +979,27 @@ final class AppModel {
             let score: Int
             let submittedAt: String
         }
+        let score: Int
+        if game == .quint {
+            // `mistakes` is Quint's wrong-guess count; the total guesses made is one more
+            // than that when the puzzle was solved (the winning guess is not "wrong").
+            let guesses = mistakes + (solved ? 1 : 0)
+            score = GameScoring.quintScore(elapsedMs: elapsedMs, guesses: guesses,
+                                           solved: solved, gaveUp: gaveUp)
+        } else {
+            score = GameScoring.score(elapsedMs: elapsedMs, gaveUp: gaveUp)
+        }
         return decode(
             Seed(date: date, game: game, elapsedMs: elapsedMs, elapsedSource: "client",
-                 mistakes: mistakes, solved: !gaveUp, gaveUp: gaveUp,
-                 score: GameScoring.score(elapsedMs: elapsedMs, gaveUp: gaveUp),
-                 submittedAt: ""),
+                 mistakes: mistakes, solved: solved, gaveUp: gaveUp,
+                 score: score, submittedAt: ""),
             as: StoredGameResult.self
         )
     }
 
     @discardableResult
     private func queueGame(kind: GameKind, elapsedMs: Int, mistakes: Int,
-                           gaveUp: Bool, answer: GameAnswer?) -> StoredGameResult? {
+                           gaveUp: Bool, answer: GameAnswer?, solved: Bool) -> StoredGameResult? {
         var queue = store.load([QueuedGameResult].self, key: StoreKey.queuedGameResults) ?? []
         queue.removeAll { $0.date == today && $0.game == kind }
         queue.append(QueuedGameResult(date: today, game: kind, tz: tz, elapsedMs: elapsedMs,
@@ -921,7 +1008,7 @@ final class AppModel {
         gamePendingSync = true
         show(toast: "Offline. Your score will sync.", isError: false)
         let local = Self.localGameResult(date: today, game: kind, elapsedMs: elapsedMs,
-                                         mistakes: mistakes, gaveUp: gaveUp)
+                                         mistakes: mistakes, gaveUp: gaveUp, solved: solved)
         if let local { gameResults[Self.gameKey(date: today, game: kind)] = local }
         return local
     }
@@ -968,10 +1055,12 @@ final class AppModel {
 
     // MARK: Games presentation
 
-    /// "Solved" / "Gave up" / "Not solved" for `GameResultsView`.
+    /// "Solved!" / "Gave up" / "Failed" (Quint) / "Not solved" (the other three games) for
+    /// `GameResultsView` (finding C6).
     static func gameHeadline(_ result: StoredGameResult) -> String {
         if result.gaveUp { return "Gave up" }
-        return result.solved ? "Solved" : "Not solved"
+        if result.solved { return "Solved!" }
+        return result.game == .quint ? "Failed" : "Not solved"
     }
 
     /// The share text for a finished grid game (`GameShareText.render`).
@@ -983,8 +1072,24 @@ final class AppModel {
             elapsedMs: result.elapsedMs,
             gaveUp: result.gaveUp,
             rows: rows,
-            refCode: profile?.invite_code
+            refCode: profile?.invite_code,
+            quintProgress: result.game == .quint ? Self.quintProgress(result) : nil
         )
+    }
+
+    /// Guesses actually made: `mistakes` (wrong guesses) plus one more when the puzzle was
+    /// solved, since the winning guess is not itself "wrong".
+    static func quintGuessesUsed(_ result: StoredGameResult) -> Int {
+        result.mistakes + (result.solved ? 1 : 0)
+    }
+
+    /// "4/6" once solved, "X/6" after six wrong guesses, or "<n>/6" for a give-up part way
+    /// through (docs/07 §Quint share text) — used by both the share text and the results
+    /// subtitle so the two numbers always agree.
+    static func quintProgress(_ result: StoredGameResult, maxGuesses: Int = 6) -> String {
+        let used = quintGuessesUsed(result)
+        if !result.solved, used >= maxGuesses { return "X/\(maxGuesses)" }
+        return "\(used)/\(maxGuesses)"
     }
 
     /// `markShared`'s counterpart for a grid game: `GameResultsView` calls this instead,

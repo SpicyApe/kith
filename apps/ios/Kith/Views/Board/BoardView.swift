@@ -182,6 +182,7 @@ struct BoardView: View {
             Text("Stars").tag(BoardGame.stars)
             Text("Duo").tag(BoardGame.duo)
             Text("Trail").tag(BoardGame.trail)
+            Text("Quint").tag(BoardGame.quint)
             Text("Total").tag(BoardGame.total)
         }
         .pickerStyle(.segmented)
@@ -190,7 +191,11 @@ struct BoardView: View {
         .accessibilityIdentifier("board.game")
     }
 
-    /// Same choices, as a `Menu` for widths the segmented control does not fit.
+    /// Same choices, as a `Menu` for widths the segmented control does not fit — six
+    /// segments (Lineup, Stars, Duo, Trail, Quint, Total) may not fit an iPhone-width
+    /// screen, in which case `ViewThatFits` falls through to this form (finding C2). Which
+    /// form actually renders depends on the simulator/device width, so
+    /// `GamesUITests.testBoardGamePicker` is written to drive either one.
     private var gameMenuPicker: some View {
         Menu {
             Picker("Game", selection: $game) {
@@ -198,6 +203,7 @@ struct BoardView: View {
                 Text("Stars").tag(BoardGame.stars)
                 Text("Duo").tag(BoardGame.duo)
                 Text("Trail").tag(BoardGame.trail)
+                Text("Quint").tag(BoardGame.quint)
                 Text("Total").tag(BoardGame.total)
             }
         } label: {
@@ -222,6 +228,7 @@ struct BoardView: View {
         case .stars: return "Stars"
         case .duo: return "Duo"
         case .trail: return "Trail"
+        case .quint: return "Quint"
         case .total: return "Total"
         }
     }
@@ -299,7 +306,7 @@ struct BoardView: View {
         guard period == .today, row.played else { return nil }
         switch game {
         case .lineup, .total: return nil
-        case .stars, .duo, .trail:
+        case .stars, .duo, .trail, .quint:
             guard let elapsed = times[row.userId] else { return nil }
             return AppModel.clock(elapsed)
         }

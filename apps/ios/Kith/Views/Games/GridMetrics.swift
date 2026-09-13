@@ -49,24 +49,14 @@ struct GridMetrics: Equatable {
     }
 }
 
-/// Twelve muted region fills plus a distinct glyph each, so Stars is readable with
-/// `accessibilityDifferentiateWithoutColor` on and in dark mode (the tints are system
-/// colours, so they adapt).
+/// Twelve distinct glyphs, one per region, for the `accessibilityDifferentiateWithoutColor`
+/// overlay (docs/08-visual-design.md). The opaque fills themselves live in `Theme.region(_:)`.
 enum RegionStyle {
-    static let colors: [Color] = [
-        .red, .orange, .yellow, .green, .mint, .teal,
-        .cyan, .blue, .indigo, .purple, .pink, .brown,
-    ]
-
     static let symbols: [String] = [
         "circle.fill", "square.fill", "triangle.fill", "diamond.fill",
         "hexagon.fill", "seal.fill", "capsule.fill", "rhombus.fill",
         "octagon.fill", "pentagon.fill", "heart.fill", "moon.fill",
     ]
-
-    static func color(_ region: Int) -> Color {
-        colors[((region % colors.count) + colors.count) % colors.count].opacity(0.28)
-    }
 
     static func symbol(_ region: Int) -> String {
         symbols[((region % symbols.count) + symbols.count) % symbols.count]
@@ -77,4 +67,64 @@ extension GridPoint {
     /// "row 3 column 5" — VoiceOver reads cells in human 1-based numbering, while the
     /// accessibility *identifiers* stay on the engine's 0-based coordinates.
     var spokenPosition: String { "row \(row + 1) column \(col + 1)" }
+}
+
+extension GridMetrics {
+    /// The flush-cell line system all three grids share (docs/08-visual-design.md): a
+    /// 0.75 pt `ink` line at 22% opacity between every pair of adjacent cells, thickened to
+    /// 2.5 pt full-strength `ink` wherever `regions` says the two cells' regions differ.
+    /// Stars passes its region map; Duo and Trail pass `nil` and get uniform thin dividers
+    /// (no region lines). Drawn once, above the cells, so adjacent thin/thick edges never
+    /// double up the way per-cell borders would.
+    func lineOverlay(regions: [[Int]]? = nil) -> some View {
+        let n = size
+        let s = step
+        let thin = Theme.ink.opacity(0.22)
+        let thick = Theme.ink
+
+        func differs(_ a: (Int, Int), _ b: (Int, Int)) -> Bool {
+            guard let regions else { return false }
+            return regions[a.0][a.1] != regions[b.0][b.1]
+        }
+
+        return Canvas { context, _ in
+            guard n > 1 else { return }
+            // Vertical edges, between column `col` and `col + 1`.
+            for row in 0..<n {
+                for col in 0..<(n - 1) {
+                    let isThick = differs((row, col), (row, col + 1))
+                    let x = CGFloat(col + 1) * s
+                    var path = Path()
+                    path.move(to: CGPoint(x: x, y: CGFloat(row) * s))
+                    path.addLine(to: CGPoint(x: x, y: CGFloat(row + 1) * s))
+                    context.stroke(path, with: .color(isThick ? thick : thin), lineWidth: isThick ? 2.5 : 0.75)
+                }
+            }
+            // Horizontal edges, between row `row` and `row + 1`.
+            for row in 0..<(n - 1) {
+                for col in 0..<n {
+                    let isThick = differs((row, col), (row + 1, col))
+                    let y = CGFloat(row + 1) * s
+                    var path = Path()
+                    path.move(to: CGPoint(x: CGFloat(col) * s, y: y))
+                    path.addLine(to: CGPoint(x: CGFloat(col + 1) * s, y: y))
+                    context.stroke(path, with: .color(isThick ? thick : thin), lineWidth: isThick ? 2.5 : 0.75)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+extension View {
+    /// The board chrome shared by all three grids: 10 pt outer corners and a 2.5 pt `ink`
+    /// border, applied around the flush cell stack (docs/08-visual-design.md).
+    func gridBoardChrome() -> some View {
+        self
+            .clipShape(RoundedRectangle(cornerRadius: Theme.boardRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.boardRadius, style: .continuous)
+                    .strokeBorder(Theme.ink, lineWidth: 2.5)
+            )
+    }
 }

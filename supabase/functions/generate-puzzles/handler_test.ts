@@ -4,6 +4,7 @@
 import { assert, assertEquals, assertNotEquals, assertRejects } from "jsr:@std/assert";
 import { FakeGenerateStore } from "../_shared/test_fakes.ts";
 import { GAME_KINDS, gameSeedFor } from "../_shared/games/common.ts";
+import { generateQuint } from "../_shared/games/quint.ts";
 import {
   difficultyFor,
   gapsOk,
@@ -761,4 +762,101 @@ Deno.test("handleGenerate - grid games: insertGame throwing for the second game 
   assertEquals(report.games.created.includes("2026-09-14#stars"), true);
   assertEquals(report.games.skipped.includes("2026-09-14#duo"), true);
   assertEquals(report.games.created.includes("2026-09-14#trail"), true);
+});
+
+// ---------------------------------------------------------------------------
+// grid games: quint fill passes recentQuintWords (docs/07 §"Quint" generation)
+// ---------------------------------------------------------------------------
+
+Deno.test("handleGenerate - grid games: fill-ahead includes quint", async () => {
+  const store = new FakeGenerateStore();
+  const now = new Date("2026-09-14T00:00:00Z");
+
+  const report = await handleGenerate({ daysAhead: 1 }, now, store);
+
+  assert(report.games.created.includes("2026-09-14#quint"));
+  const inserted = store.insertedGames.find((r) => r.date === "2026-09-14" && r.g.game === "quint");
+  assert(inserted !== undefined);
+  assertEquals(inserted!.g.spec, { n: 5, guesses: 6, answer: (inserted!.g.solution as { word: string }).word });
+});
+
+Deno.test("handleGenerate - grid games: quint fill-ahead skips a word from store.recentQuintWords", async () => {
+  const store = new FakeGenerateStore();
+  const now = new Date("2026-09-14T00:00:00Z");
+  const date = "2026-09-14";
+
+  // The word generateDailyGame("quint", date, 0, {}) would pick with no exclusions.
+  const fresh = generateQuint(date, 0, new Set());
+  store.recentQuintWordsData = new Set([fresh.spec.answer]);
+
+  const report = await handleGenerate({ daysAhead: 1 }, now, store);
+
+  assert(report.games.created.includes(`${date}#quint`));
+  const inserted = store.insertedGames.find((r) => r.date === date && r.g.game === "quint");
+  assert(inserted !== undefined);
+  assertNotEquals((inserted!.g.solution as { word: string }).word, fresh.spec.answer);
+});
+
+Deno.test("handleGenerate - grid games: a fill run doesn't repeat a quint word across its own dates", async () => {
+  const store = new FakeGenerateStore();
+  const now = new Date("2026-09-14T00:00:00Z");
+
+  await handleGenerate({ daysAhead: 3 }, now, store);
+
+  const words = store.insertedGames
+    .filter((r) => r.g.game === "quint")
+    .map((r) => (r.g.solution as { word: string }).word);
+  assertEquals(words.length, 3);
+  assertEquals(new Set(words).size, words.length, `expected 3 distinct quint words, got ${JSON.stringify(words)}`);
+});
+
+Deno.test("handleGenerate - grid games: reseeding a quint game passes store.recentQuintWords(date)", async () => {
+  const store = new FakeGenerateStore();
+  const date = "2026-09-14";
+  store.gamesData.set(`${date}#quint`, {
+    g: { game: "quint", spec: { n: 5, guesses: 6, answer: "crane" }, solution: { word: "crane" }, difficulty: "medium", seed: 1 },
+    number: 3,
+  });
+
+  // Exclude every candidate word attempt 1 would otherwise pick, forcing the
+  // fake's recentQuintWords to actually be consulted rather than trivially
+  // vacuous — attempt 1's fresh pick must differ once excluded.
+  const attempt1Fresh = generateQuint(date, 1, new Set());
+  store.recentQuintWordsData = new Set([attempt1Fresh.spec.answer]);
+
+  const now = new Date("2026-09-14T00:00:00Z");
+  const report = await handleGenerate({ date, game: "quint" }, now, store);
+
+  assertEquals(report.games.replaced, [`${date}#quint`]);
+  const replaced = store.replacedGames.find((r) => r.date === date && r.g.game === "quint");
+  assert(replaced !== undefined);
+  assertNotEquals((replaced!.g.solution as { word: string }).word, attempt1Fresh.spec.answer);
+});
+
+Deno.test("handleGenerate - grid games: reseed excludes only the being-reseeded date's own word from recentQuintWords", async () => {
+  const store = new FakeGenerateStore();
+  const date = "2026-09-14";
+  const attempt1Fresh = generateQuint(date, 1, new Set());
+  store.gamesData.set(`${date}#quint`, {
+    g: {
+      game: "quint",
+      spec: { n: 5, guesses: 6, answer: attempt1Fresh.spec.answer },
+      solution: { word: attempt1Fresh.spec.answer },
+      difficulty: "medium",
+      seed: 1,
+    },
+    number: 3,
+  });
+  // Simulate the store reporting this date's own current word as "recent" (as it would
+  // with no upper bound on the date range) -- the reseed path must exclude only this
+  // date's row, so it can still land on the same word attempt 1 naturally picks.
+  store.recentQuintWordsData = new Set([attempt1Fresh.spec.answer]);
+
+  const now = new Date("2026-09-14T00:00:00Z");
+  const report = await handleGenerate({ date, game: "quint" }, now, store);
+
+  assertEquals(report.games.replaced, [`${date}#quint`]);
+  const replaced = store.replacedGames.find((r) => r.date === date && r.g.game === "quint");
+  assert(replaced !== undefined);
+  assertEquals((replaced!.g.solution as { word: string }).word, attempt1Fresh.spec.answer);
 });

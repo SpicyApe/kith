@@ -4,10 +4,10 @@
 
 import { difficultyFor } from "../../generate-puzzles/handler.ts";
 
-export type GameKind = "stars" | "duo" | "trail";
+export type GameKind = "stars" | "duo" | "trail" | "quint";
 export type Difficulty = "easy" | "medium" | "hard";
 
-export const GAME_KINDS: readonly GameKind[] = ["stars", "duo", "trail"];
+export const GAME_KINDS: readonly GameKind[] = ["stars", "duo", "trail", "quint"];
 
 export interface GeneratedGame {
   game: GameKind;
@@ -45,7 +45,10 @@ export function scoreFor(elapsedMs: number, gaveUp: boolean): number {
 }
 
 /** Display names used in share text and copy. */
-export const GAME_TITLES: Record<GameKind, string> = { stars: "Stars", duo: "Duo", trail: "Trail" };
+export const GAME_TITLES: Record<GameKind, string> = { stars: "Stars", duo: "Duo", trail: "Trail", quint: "Quint" };
+
+/** Quint's guess cap, mirrored from games/quint.ts (kept here too so common.ts has no import cycle). */
+const QUINT_GUESSES = 6;
 
 /**
  * Share block:
@@ -53,17 +56,28 @@ export const GAME_TITLES: Record<GameKind, string> = { stars: "Stars", duo: "Duo
  *   <rows...>                                (one per element of `rows`, may be empty)
  *   kith.app/g/<game>/<number>[?r=<refCode>]
  * Time is floor(elapsedMs/1000) as m:ss (seconds zero-padded). Lines joined with "\n", no trailing newline.
+ *
+ * Quint is a variant: the header is `Kith Quint #<number> · <progress> · <m:ss>` when solved
+ * or `Kith Quint #<number> · <progress> · gave up` when `gaveUp` — `<progress>` is
+ * `quintProgress` if supplied, else `<rows.length>/6`. A six-guess fail (not solved, not
+ * given up) still shows the time, with progress `X/6`, via the caller passing that in
+ * `quintProgress`.
  */
 export function gameShareText(game: GameKind, number: number, elapsedMs: number, gaveUp: boolean,
-                              rows: string[], refCode?: string | null): string {
+                              rows: string[], refCode?: string | null, quintProgress?: string): string {
+  const totalSeconds = Math.floor(Math.max(Number.isFinite(elapsedMs) ? elapsedMs : 0, 0) / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const time = `${minutes}:${String(seconds).padStart(2, "0")}`;
+
   let suffix: string;
-  if (gaveUp) {
+  if (game === "quint") {
+    const progress = quintProgress ?? `${rows.length}/${QUINT_GUESSES}`;
+    suffix = gaveUp ? `${progress} · gave up` : `${progress} · ${time}`;
+  } else if (gaveUp) {
     suffix = "gave up";
   } else {
-    const totalSeconds = Math.floor(Math.max(Number.isFinite(elapsedMs) ? elapsedMs : 0, 0) / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    suffix = `${minutes}:${String(seconds).padStart(2, "0")}`;
+    suffix = time;
   }
 
   const lines = [`Kith ${GAME_TITLES[game]} #${number} · ${suffix}`, ...rows];

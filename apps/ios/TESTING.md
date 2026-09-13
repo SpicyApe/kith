@@ -72,15 +72,23 @@ identifiers above now live on the screen it pushes.
 
 | Screen | Identifiers |
 |---|---|
-| Hub | `hub.row.lineup`, `hub.row.stars`, `hub.row.duo`, `hub.row.trail`, `hub.streak`, `hub.countdown` |
-| Game host | `game.timer`, `game.giveUp`, `game.giveUp.confirm`, `game.reset`, `game.done`, `game.retry` (a failed `startGame`'s "Try again"), `game.showResult` (on an already-played game's card, reopens `GameResultsView`) |
+| Hub | `hub.row.lineup`, `hub.row.stars`, `hub.row.duo`, `hub.row.trail`, `hub.row.quint`, `hub.streak`, `hub.countdown` |
+| Game host | `game.timer`, `game.giveUp`, `game.giveUp.confirm`, `game.reset` (not shown for Quint — a guess cannot be undone), `game.done`, `game.retry` (a failed `startGame`'s "Try again"), `game.showResult` (on an already-played game's card, reopens `GameResultsView`) |
 | Grids | `stars.cell.<r>.<c>`, `duo.cell.<r>.<c>`, `trail.cell.<r>.<c>` (accessibility label "row r column c, <state>") |
+| Quint | `quint.tile.<r>.<c>` (accessibility label "row r letter c, <LETTER>, <hit\|near\|miss>"), `quint.key.<letter>`, `quint.key.enter`, `quint.key.backspace` |
 | Game results | `gameResults.headline`, `gameResults.time`, `gameResults.score`, `gameResults.share` |
-| Board | `board.game` (Picker or, below the width the five-segment control fits, a `Menu` — same identifier either way) |
+| Board | `board.game` (Picker or, below the width the six-segment control fits, a `Menu` — same identifier either way; six segments — Lineup/Stars/Duo/Trail/Quint/Total — no longer fit an iPhone-width simulator, so the hermetic UI test always sees the `Menu` form) |
 
 `<r>` and `<c>` in the grid identifiers are the engine's **0-based** coordinates, matching
 `today.tile.<i>`; the spoken label numbers them from 1 ("row 1 column 2, empty"), which is
 what VoiceOver users expect.
+
+Two documented exceptions to the "44 pt targets everywhere" rule (docs/08-visual-design.md
+§Accessibility): the ≥ 9×9 grids, where `GridMetrics.spacing(for:base:)` and
+`GameHostView.hostHorizontalPadding` tighten spacing/padding so the board still fits
+(apps/ios/Kith/README.md "Known gotchas" #3); and Quint's on-screen keyboard keys, which
+stay narrower than 44 pt so all ten letters of the top row fit one screen width — only the
+46 pt `minHeight` is held to the target size.
 
 Under `-uiTesting` the fake puzzles are tiny so UI tests can solve them by tapping cells in
 a known order:
@@ -94,9 +102,15 @@ a known order:
 - **Trail** 3×3, waypoints `[[0,0],[1,1],[2,2]]`, solved by the snake
   (0,0) (0,1) (0,2) (1,2) (1,1) (1,0) (2,0) (2,1) (2,2). The path always starts at
   waypoint 1, `(0,0)`, so a test only taps the remaining eight cells in that order.
+- **Quint** answer `"crane"`, puzzle number 3. A test types `slate` (a real word, wrong)
+  then `crane` via `quint.key.<letter>` and `quint.key.enter`; the second, solving guess
+  submits on its own (no `game.done` tap) and lands on the results screen.
 
-`dailyGames` returns all three every day; `submitGame` records the call (`gameSubmissions`)
-and scores with `GameScoring.score`; `failNextGameSubmit` is the grid-game twin of
+`dailyGames` returns all four every day; `submitGame` records the call (`gameSubmissions`)
+and scores with `GameScoring.score` (`GameScoring.quintScore` for Quint, which also
+recomputes `solved` and `mistakes` from the submitted `guesses` rather than trusting the
+client, exactly like the real `submit-game` per docs/07); `failNextGameSubmit` is the
+grid-game twin of
 `failNextSubmit`. `failNextGameSubmitWithNoStart` makes the next `submitGame` throw
 `KithError.api(status: 409, code: "no_start", message:)` once — the backend's answer when
 `start_game` was never called for that date/game; `AppModel`'s submit path replays

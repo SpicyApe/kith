@@ -12,6 +12,7 @@ private struct GoldenCase: Decodable {
     let gaveUp: Bool
     let refCode: String?
     let shareRows: [String]
+    let quintProgress: String?
     let shareText: String
 
     let starsSpec: StarsSpec?
@@ -20,9 +21,15 @@ private struct GoldenCase: Decodable {
     let duoAnswer: [[Int]]?
     let trailSpec: TrailSpec?
     let trailAnswer: [[Int]]?
+    let quintSpec: QuintSpec?
+    let quintAnswer: [String]?
 
     private enum CodingKeys: String, CodingKey {
-        case game, spec, answer, shareRows, number, elapsedMs, gaveUp, refCode, shareText
+        case game, spec, answer, shareRows, number, elapsedMs, gaveUp, refCode, quintProgress, shareText
+    }
+
+    private enum QuintAnswerKeys: String, CodingKey {
+        case guesses
     }
 
     init(from decoder: Decoder) throws {
@@ -33,10 +40,11 @@ private struct GoldenCase: Decodable {
         gaveUp = try c.decode(Bool.self, forKey: .gaveUp)
         refCode = try c.decodeIfPresent(String.self, forKey: .refCode)
         shareRows = try c.decode([String].self, forKey: .shareRows)
+        quintProgress = try c.decodeIfPresent(String.self, forKey: .quintProgress)
         shareText = try c.decode(String.self, forKey: .shareText)
 
-        var starsSpec: StarsSpec?, duoSpec: DuoSpec?, trailSpec: TrailSpec?
-        var starsAnswer: [Int]?, duoAnswer: [[Int]]?, trailAnswer: [[Int]]?
+        var starsSpec: StarsSpec?, duoSpec: DuoSpec?, trailSpec: TrailSpec?, quintSpec: QuintSpec?
+        var starsAnswer: [Int]?, duoAnswer: [[Int]]?, trailAnswer: [[Int]]?, quintAnswer: [String]?
         switch game {
         case .stars:
             starsSpec = try c.decode(StarsSpec.self, forKey: .spec)
@@ -47,13 +55,19 @@ private struct GoldenCase: Decodable {
         case .trail:
             trailSpec = try c.decode(TrailSpec.self, forKey: .spec)
             trailAnswer = try c.decode([[Int]].self, forKey: .answer)
+        case .quint:
+            quintSpec = try c.decode(QuintSpec.self, forKey: .spec)
+            let answerContainer = try c.nestedContainer(keyedBy: QuintAnswerKeys.self, forKey: .answer)
+            quintAnswer = try answerContainer.decode([String].self, forKey: .guesses)
         }
         self.starsSpec = starsSpec
         self.duoSpec = duoSpec
         self.trailSpec = trailSpec
+        self.quintSpec = quintSpec
         self.starsAnswer = starsAnswer
         self.duoAnswer = duoAnswer
         self.trailAnswer = trailAnswer
+        self.quintAnswer = quintAnswer
     }
 }
 
@@ -70,8 +84,10 @@ final class GoldenVectorTests: XCTestCase {
 
     func testGoldenVectors() throws {
         let cases = try loadCases()
-        XCTAssertEqual(cases.map(\.game).sorted { $0.rawValue < $1.rawValue },
-                        [.duo, .stars, .trail], "expect exactly one case per game")
+        XCTAssertEqual(Set(cases.map(\.game.rawValue)), ["duo", "quint", "stars", "trail"],
+                        "expect at least one case per game")
+        let quintCases = cases.filter { $0.game == .quint }
+        XCTAssertGreaterThanOrEqual(quintCases.count, 3, "expect solved, fail and give-up quint cases")
 
         for c in cases {
             switch c.game {
@@ -81,6 +97,8 @@ final class GoldenVectorTests: XCTestCase {
                 try checkDuo(c)
             case .trail:
                 try checkTrail(c)
+            case .quint:
+                try checkQuint(c)
             }
         }
     }
@@ -133,6 +151,28 @@ final class GoldenVectorTests: XCTestCase {
         XCTAssertEqual(engine.shareRows(), c.shareRows)
         let text = GameShareText.render(game: .trail, number: c.number, elapsedMs: c.elapsedMs,
                                          gaveUp: c.gaveUp, rows: engine.shareRows(), refCode: c.refCode)
+        XCTAssertEqual(text, c.shareText)
+    }
+
+    private func checkQuint(_ c: GoldenCase) throws {
+        guard let spec = c.quintSpec, let answer = c.quintAnswer, let quintProgress = c.quintProgress else {
+            return XCTFail("quint case missing spec/answer/quintProgress")
+        }
+        var engine = try QuintEngine(spec: spec)
+        for guess in answer {
+            for letter in guess {
+                XCTAssertTrue(engine.type(letter))
+            }
+            XCTAssertEqual(engine.submit(), .accepted)
+        }
+        if !c.gaveUp {
+            XCTAssertTrue(engine.isComplete)
+        }
+        XCTAssertEqual(engine.guessesAnswer, answer)
+        XCTAssertEqual(engine.shareRows(), c.shareRows)
+        let text = GameShareText.render(game: .quint, number: c.number, elapsedMs: c.elapsedMs,
+                                         gaveUp: c.gaveUp, rows: engine.shareRows(), refCode: c.refCode,
+                                         quintProgress: quintProgress)
         XCTAssertEqual(text, c.shareText)
     }
 }

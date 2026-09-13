@@ -21,6 +21,7 @@ import XCTest
         awaitElement(element("hub.row.stars"), "hub.row.stars never appeared")
         awaitElement(element("hub.row.duo"), "hub.row.duo never appeared")
         awaitElement(element("hub.row.trail"), "hub.row.trail never appeared")
+        awaitElement(element("hub.row.quint"), "hub.row.quint never appeared")
 
         assertLabelContains(element("hub.streak"), "12")
         awaitElement(element("hub.countdown"), "hub.countdown never appeared")
@@ -46,7 +47,7 @@ import XCTest
         // "Done" only exists once the engine reports the grid complete.
         awaitAndTap(app.buttons["game.done"], "game.done never appeared after placing five stars")
 
-        assertLabelEquals(element("gameResults.headline"), "Solved")
+        assertLabelEquals(element("gameResults.headline"), "Solved!")
         awaitElement(element("gameResults.score"), "gameResults.score never appeared")
         awaitElement(element("gameResults.time"), "gameResults.time never appeared")
         awaitElement(element("gameResults.share"), "gameResults.share never appeared")
@@ -69,6 +70,31 @@ import XCTest
 
         awaitAndTap(app.buttons["game.done"], "game.done never appeared after completing the trail")
 
+        awaitElement(element("gameResults.headline"), "gameResults.headline never appeared")
+    }
+
+    // MARK: - 2c. Solving the fake Quint puzzle
+
+    func testSolveFakeQuint() {
+        let app = launch(state: "returning")
+
+        openHubRow("quint")
+        awaitElement(element("quint.tile.0.0"), "The Quint grid never appeared",
+                     timeout: KithUITestCase.launchTimeout)
+
+        // "slate" (wrong), then "crane" (the fake's answer, TESTING.md §3).
+        for letter in "slate" {
+            awaitAndTap(element("quint.key.\(letter)"), "quint.key.\(letter) never appeared")
+        }
+        awaitAndTap(element("quint.key.enter"), "quint.key.enter never appeared")
+
+        for letter in "crane" {
+            awaitAndTap(element("quint.key.\(letter)"), "quint.key.\(letter) never appeared")
+        }
+        awaitAndTap(element("quint.key.enter"), "quint.key.enter never appeared")
+
+        // A solving guess submits on its own (no Done tap needed) via the same completion
+        // path the other games' Done button uses.
         awaitElement(element("gameResults.headline"), "gameResults.headline never appeared")
     }
 
@@ -104,8 +130,23 @@ import XCTest
 
         tapTab("tab.board")
 
-        let picker = awaitElement(app.segmentedControls["board.game"], "board.game never appeared")
-        awaitAndTap(picker.buttons["Total"], "The Total segment never appeared")
+        // Six segments (Lineup, Stars, Duo, Trail, Quint, Total) may or may not fit the
+        // segmented control depending on the simulator's width, so `ViewThatFits` can render
+        // either the segmented form (segments already on screen) or the `Menu` form (segments
+        // revealed only after a tap) — same `board.game` identifier either way (TESTING.md
+        // §3). Stay form-agnostic rather than assuming which one is on screen.
+        let picker = awaitElement(element("board.game"), "board.game never appeared")
+        let total = app.descendants(matching: .any).matching(identifier: "Total").firstMatch
+        if !total.waitForExistence(timeout: 1) {
+            picker.tap()
+        }
+        if total.waitForExistence(timeout: KithUITestCase.timeout) {
+            total.tap()
+        } else if app.buttons["Total"].waitForExistence(timeout: KithUITestCase.timeout) {
+            app.buttons["Total"].tap()
+        } else {
+            awaitAndTap(app.menuItems["Total"], "The Total menu item never appeared")
+        }
 
         // The fake serves the same friend rows for every column, so the board must still
         // have rows after switching.

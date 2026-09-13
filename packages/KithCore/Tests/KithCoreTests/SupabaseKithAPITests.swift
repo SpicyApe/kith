@@ -749,7 +749,7 @@ final class SupabaseKithAPITests: XCTestCase {
         let http = FakeHTTPClient()
         let api = makeAPI(http: http, auth: FakeAuth(token: makeJWT(sub: "user-42")))
         http.queue(status: 200, body: Data("""
-        [{"date":"2026-09-11","game":"duo","elapsed_ms":30000,"solved":true,"gave_up":false,"score":940}]
+        [{"date":"2026-09-11","game":"duo","elapsed_ms":30000,"mistakes":2,"solved":true,"gave_up":false,"score":940}]
         """.utf8))
 
         let results = try await api.myGameResults(sinceDate: "2026-09-01")
@@ -763,7 +763,7 @@ final class SupabaseKithAPITests: XCTestCase {
         XCTAssertEqual(req.method, .get)
         let urlString = req.url.absoluteString
         XCTAssertTrue(urlString.hasPrefix("https://example.supabase.co/rest/v1/game_results?"))
-        XCTAssertTrue(urlString.contains("select=date,game,elapsed_ms,solved,gave_up,score"))
+        XCTAssertTrue(urlString.contains("select=date,game,elapsed_ms,mistakes,solved,gave_up,score"))
         XCTAssertTrue(urlString.contains("user_id=eq.user-42"))
         XCTAssertTrue(urlString.contains("date=gte.2026-09-01"))
         XCTAssertTrue(urlString.contains("order=date.asc"))

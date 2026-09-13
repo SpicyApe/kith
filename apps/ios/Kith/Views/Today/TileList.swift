@@ -91,7 +91,7 @@ private struct TileRow: View {
 
     private var background: Color {
         if isLocked { return .tileCorrect }
-        return pulsing ? .tileNear : .tileNeutral
+        return pulsing ? .tileNear : Theme.paper
     }
 
     private var stateDescription: String {
@@ -129,9 +129,9 @@ private struct TileRow: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity)
 
-            // The drag handle is drawn by the List in edit mode; locked rows lose it,
-            // so a lock glyph keeps the row from looking empty.
-            Image(systemName: isLocked ? "lock.fill" : "line.3.horizontal")
+            // The drag handle is drawn by the List in edit mode; locked rows lose it, so a
+            // checkmark (docs/08-visual-design.md) keeps the row from looking empty.
+            Image(systemName: isLocked ? "checkmark.circle.fill" : "line.3.horizontal")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .opacity(isLocked ? 1 : 0)
@@ -141,7 +141,11 @@ private struct TileRow: View {
         .padding(.vertical, 14)
         .padding(.horizontal, 14)
         .frame(maxWidth: .infinity)
-        .background(background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(background, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+                .strokeBorder(Theme.ink.opacity(0.08), lineWidth: 1)
+        )
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: background)
         .accessibilityElement(children: .combine)
         // TESTING.md §3 pins the label to the item label; position and state ride along

@@ -29,7 +29,7 @@ public protocol KithAPI: Sendable {
     /// Edge function `submit-game`; `answer` is nil only when `gaveUp`.
     func submitGame(date: String, game: GameKind, tz: String, elapsedMs: Int, mistakes: Int,
                     gaveUp: Bool, answer: GameAnswer?) async throws -> SubmitGameResponse
-    /// `game_results?select=date,game,elapsed_ms,solved,gave_up,score&user_id=eq.<me>&date=gte.<since>&order=date.asc`.
+    /// `game_results?select=date,game,elapsed_ms,mistakes,solved,gave_up,score&user_id=eq.<me>&date=gte.<since>&order=date.asc`.
     func myGameResults(sinceDate: String) async throws -> [GameResultSummary]
     /// `daily_games?select=date,game,number,difficulty&date=eq.<date>&order=game.asc` (RLS limits to the ±14 h window).
     func dailyGames(date: String) async throws -> [DailyGameRow]
@@ -617,7 +617,7 @@ public final class SupabaseKithAPI: KithAPI {
         let request = HTTPRequest(
             method: .get,
             url: url(path: "rest/v1/game_results", queryItems: [
-                URLQueryItem(name: "select", value: "date,game,elapsed_ms,solved,gave_up,score"),
+                URLQueryItem(name: "select", value: "date,game,elapsed_ms,mistakes,solved,gave_up,score"),
                 URLQueryItem(name: "user_id", value: "eq.\(me)"),
                 URLQueryItem(name: "date", value: "gte.\(sinceDate)"),
                 URLQueryItem(name: "order", value: "date.asc"),

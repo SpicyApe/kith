@@ -75,5 +75,59 @@
     "gaveUp": false,
     "refCode": "7F3Q",
     "shareText": "Kith Trail #12 · 1:23\n🟩🟩🟩\nkith.app/g/trail/12?r=7F3Q"
+  },
+  {
+    "game": "quint",
+    "spec": {
+      "n": 5,
+      "guesses": 6,
+      "answer": "crane"
+    },
+    "answer": {
+      "guesses": ["slate", "crane"]
+    },
+    "shareRows": ["⬛️⬛️🟩⬛️🟩", "🟩🟩🟩🟩🟩"],
+    "number": 12,
+    "elapsedMs": 83000,
+    "gaveUp": false,
+    "refCode": "7F3Q",
+    "quintProgress": "2/6",
+    "shareText": "Kith Quint #12 · 2/6 · 1:23\n⬛️⬛️🟩⬛️🟩\n🟩🟩🟩🟩🟩\nkith.app/g/quint/12?r=7F3Q"
+  },
+  {
+    "game": "quint",
+    "spec": {
+      "n": 5,
+      "guesses": 6,
+      "answer": "crane"
+    },
+    "answer": {
+      "guesses": ["slate", "spike", "grace", "stone", "chest", "plant"]
+    },
+    "shareRows": ["⬛️⬛️🟩⬛️🟩", "⬛️⬛️⬛️⬛️🟩", "⬛️🟩🟩🟨🟩", "⬛️⬛️⬛️🟩🟩", "🟩⬛️🟨⬛️⬛️", "⬛️⬛️🟩🟩⬛️"],
+    "number": 12,
+    "elapsedMs": 62000,
+    "gaveUp": false,
+    "refCode": "7F3Q",
+    "quintProgress": "X/6",
+    "shareText": "Kith Quint #12 · X/6 · 1:02\n⬛️⬛️🟩⬛️🟩\n⬛️⬛️⬛️⬛️🟩\n⬛️🟩🟩🟨🟩\n⬛️⬛️⬛️🟩🟩\n🟩⬛️🟨⬛️⬛️\n⬛️⬛️🟩🟩⬛️\nkith.app/g/quint/12?r=7F3Q"
+  },
+  {
+    "game": "quint",
+    "spec": {
+      "n": 5,
+      "guesses": 6,
+      "answer": "crane"
+    },
+    "answer": {
+      "guesses": ["slate", "spike", "grace"]
+    },
+    "shareRows": ["⬛️⬛️🟩⬛️🟩", "⬛️⬛️⬛️⬛️🟩", "⬛️🟩🟩🟨🟩"],
+    "number": 12,
+    "elapsedMs": 45000,
+    "gaveUp": true,
+    "refCode": "7F3Q",
+    "quintProgress": "3/6",
+    "shareText": "Kith Quint #12 · 3/6 · gave up\n⬛️⬛️🟩⬛️🟩\n⬛️⬛️⬛️⬛️🟩\n⬛️🟩🟩🟨🟩\nkith.app/g/quint/12?r=7F3Q"
   }
 ]

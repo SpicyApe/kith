@@ -1,0 +1,330 @@
+<title>Kith Games Boards</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&display=swap">
+<style>
+  :root {
+    --ink: #1C1C1E; --paper: #FFFFFF; --paper-muted: #EFEFF3; --ground: #F3F3F6;
+    --text-2: #6B6B72; --line: rgba(28,28,30,0.22); --hair: rgba(28,28,30,0.08);
+    --danger: #D9342B; --danger-wash: #FFE3E0;
+    --lineup: #3B6FE0; --stars: #6E56CF; --duo: #F5A524; --duo-alt: #4C5BD4; --trail: #1F9E89; --quint: #C8377B;
+    --r0:#C9B8F0; --r1:#FFC9A3; --r2:#A9CFFF; --r3:#B5E8B0; --r4:#F3EC8E;
+    --r5:#F5B3C8; --r6:#D9CBA8; --r7:#9EDCE0; --r8:#FF9C8A; --r9:#CFD4DC;
+    --disc-text: #FFFFFF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #F2F2F7; --paper: #1C1C1E; --paper-muted: #2C2C2E; --ground: #121214;
+      --text-2: #A1A1AA; --line: rgba(242,242,247,0.22); --hair: rgba(242,242,247,0.10);
+      --danger: #FF6B5E; --danger-wash: #4A2622;
+      --lineup: #6C93F2; --stars: #9B86F0; --duo: #F7B955; --duo-alt: #7C8AF0; --trail: #3FC3AC; --quint: #E85D9B;
+      --r0:#4E3F7A; --r1:#7A4A2A; --r2:#2C4A78; --r3:#2E5E33; --r4:#6B6320;
+      --r5:#7A3A52; --r6:#5A5040; --r7:#23575C; --r8:#7A3A30; --r9:#4A5060;
+      --disc-text: #1C1C1E;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #F2F2F7; --paper: #1C1C1E; --paper-muted: #2C2C2E; --ground: #121214;
+    --text-2: #A1A1AA; --line: rgba(242,242,247,0.22); --hair: rgba(242,242,247,0.10);
+    --danger: #FF6B5E; --danger-wash: #4A2622;
+    --lineup: #6C93F2; --stars: #9B86F0; --duo: #F7B955; --duo-alt: #7C8AF0; --trail: #3FC3AC; --quint: #E85D9B;
+    --r0:#4E3F7A; --r1:#7A4A2A; --r2:#2C4A78; --r3:#2E5E33; --r4:#6B6320;
+    --r5:#7A3A52; --r6:#5A5040; --r7:#23575C; --r8:#7A3A30; --r9:#4A5060;
+    --disc-text: #1C1C1E;
+  }
+
+  * { box-sizing: border-box; }
+  body { background: var(--ground); color: var(--ink); font: 15px/1.45 -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif; margin: 0; }
+  .rounded, h1, h2, .num { font-family: "Nunito", "SF Pro Rounded", -apple-system, system-ui, sans-serif; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  header.page { padding: 36px 24px 8px; max-width: 1240px; margin: 0 auto; }
+  header.page h1 { font-size: 30px; font-weight: 900; margin: 0 0 6px; letter-spacing: -0.01em; }
+  header.page p { margin: 0; color: var(--text-2); max-width: 62ch; }
+  header.page a { color: var(--lineup); }
+
+  .phones { display: flex; gap: 28px; padding: 24px; overflow-x: auto; max-width: 1240px; margin: 0 auto; align-items: flex-start; }
+  .phone { flex: 0 0 372px; width: 372px; background: var(--paper); border: 1px solid var(--hair); border-radius: 34px; padding: 18px 16px 22px; box-shadow: 0 18px 40px rgba(0,0,0,0.10); }
+  .phone .cap { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); font-weight: 700; margin: 0 4px 10px; }
+
+  /* nav */
+  .nav { display: flex; align-items: center; justify-content: space-between; height: 44px; margin-bottom: 8px; }
+  .nav .back { color: var(--lineup); font-weight: 600; }
+  .nav .help { width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid var(--line); display: grid; place-items: center; font-weight: 800; font-size: 14px; }
+  .nav .title { text-align: center; }
+  .nav .title b { display: block; font-size: 16px; }
+  .timer { display: inline-block; background: var(--paper-muted); border-radius: 10px; padding: 2px 10px; font-weight: 800; font-size: 14px; margin-top: 2px; }
+
+  /* hub */
+  .large { font-size: 34px; font-weight: 900; margin: 6px 4px 10px; }
+  .pills { display: flex; gap: 8px; margin: 0 4px 16px; }
+  .pill { background: var(--paper-muted); border-radius: 10px; padding: 6px 12px; font-weight: 700; font-size: 14px; display: inline-flex; gap: 6px; align-items: center; }
+  .pill .flame { color: #FF6A2D; }
+  .cards { display: flex; flex-direction: column; gap: 12px; }
+  .card { display: flex; align-items: center; gap: 14px; padding: 12px; border: 1px solid var(--hair); border-radius: 14px; background: var(--paper); }
+  .card .tile { width: 56px; height: 56px; border-radius: 14px; display: grid; place-items: center; color: #fff; flex: none; }
+  .card .tile svg { width: 28px; height: 28px; fill: currentColor; }
+  .card .t { flex: 1; min-width: 0; }
+  .card .t b { display: block; font-size: 18px; font-weight: 800; }
+  .card .t span { color: var(--text-2); font-size: 14px; }
+  .badge { background: var(--paper-muted); border-radius: 999px; padding: 6px 12px; font-weight: 800; font-size: 14px; }
+  .play { border-radius: 999px; padding: 8px 16px; font-weight: 800; font-size: 14px; color: #fff; }
+  .muted { color: var(--text-2); font-size: 14px; }
+
+  /* boards */
+  .board { position: relative; width: 340px; height: 340px; margin: 12px auto 10px; border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 2.5px var(--ink); background: var(--paper); }
+  .board svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .actions { display: flex; gap: 10px; margin: 14px 4px 0; }
+  .btn { flex: 1; height: 44px; border-radius: 14px; display: grid; place-items: center; font-weight: 800; font-size: 15px; background: var(--paper-muted); }
+  .btn.danger { color: var(--danger); }
+  .btn.done { background: var(--stars); color: #fff; }
+  .legend { display: flex; gap: 14px; justify-content: center; margin-top: 12px; color: var(--text-2); font-size: 13px; }
+
+  /* results */
+  .results { text-align: center; padding-top: 30px; }
+  .results h2 { font-size: 36px; font-weight: 900; margin: 0; }
+  .results .sub { color: var(--text-2); margin: 4px 0 22px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0 4px 18px; }
+  .stats .num { font-size: 34px; font-weight: 800; line-height: 1; }
+  .stats small { display: block; color: var(--text-2); font-size: 12px; margin-top: 6px; }
+  .preview { background: var(--paper-muted); border-radius: 14px; padding: 14px; font: 15px/1.35 ui-monospace, Menlo, monospace; text-align: left; white-space: pre; margin: 0 4px 14px; overflow-x: auto; }
+  .share { height: 50px; border-radius: 14px; background: var(--stars); color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 16px; margin: 0 4px; }
+
+  /* quint */
+  .qgrid { display: grid; grid-template-columns: repeat(5, 58px); grid-auto-rows: 58px; gap: 6px; justify-content: center; margin: 14px auto 18px; }
+  .qt { display: grid; place-items: center; font-family: "Nunito", system-ui, sans-serif; font-weight: 900; font-size: 30px; text-transform: uppercase; border: 2px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--paper); }
+  .qt.filled { border-color: var(--ink); }
+  .qt.hit { background: var(--trail); border-color: var(--trail); color: #fff; }
+  .qt.near { background: var(--duo); border-color: var(--duo); color: #fff; }
+  .qt.miss { background: var(--paper-muted); border-color: var(--paper-muted); color: var(--ink); opacity: 0.85; }
+  .kbd { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+  .kbd .krow { display: flex; gap: 5px; }
+  .key { min-width: 30px; height: 46px; padding: 0 6px; border-radius: 6px; background: var(--paper-muted); display: grid; place-items: center; font-weight: 800; font-size: 14px; text-transform: uppercase; }
+  .key.wide { min-width: 48px; font-size: 11px; }
+  .key.hit { background: var(--trail); color: #fff; } .key.near { background: var(--duo); color: #fff; } .key.miss { opacity: 0.35; }
+
+  .swatches { max-width: 1240px; margin: 0 auto; padding: 8px 24px 48px; }
+  .swatches h2 { font-size: 18px; font-weight: 800; margin: 0 0 10px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .sw { width: 92px; height: 56px; border-radius: 10px; display: grid; place-items: end start; padding: 6px; font-size: 12px; font-weight: 700; color: var(--ink); box-shadow: inset 0 0 0 1px var(--hair); }
+  @media (prefers-reduced-motion: no-preference) { .card:hover { transform: translateY(-1px); transition: transform .15s; } }
+</style>
+
+<header class="page">
+  <h1>Kith games boards</h1>
+  <p>Target look for Stars, Duo and Trail, per <a href="../08-visual-design.md">docs/08-visual-design.md</a>: flush cells, thick region outlines, opaque fills chosen for contrast, one strong colour per game, rounded numerals. Switch your theme to check dark mode.</p>
+</header>
+
+<div class="phones">
+  <!-- HUB -->
+  <div class="phone">
+    <div class="cap">Today · hub</div>
+    <div class="large rounded">Today</div>
+    <div class="pills">
+      <div class="pill num"><span class="flame">🔥</span> 12</div>
+      <div class="pill num">New games in 7h 12m</div>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <div class="tile" style="background:var(--lineup)"><svg viewBox="0 0 24 24"><path d="M4 6h16v3H4zM4 10.5h16v3H4zM4 15h16v3H4z"/></svg></div>
+        <div class="t"><b class="rounded">Lineup</b><span>Solved on try 2 · 0:41</span></div>
+        <div class="badge num">0:41</div>
+      </div>
+      <div class="card">
+        <div class="tile" style="background:var(--stars)"><svg viewBox="0 0 24 24"><path d="M12 2.5l2.9 6.2 6.8.8-5 4.6 1.3 6.7L12 17.5l-6 3.3 1.3-6.7-5-4.6 6.8-.8z"/></svg></div>
+        <div class="t"><b class="rounded">Stars</b><span>8×8 · one star per row, column and region</span></div>
+        <div class="play" style="background:var(--stars)">Play</div>
+      </div>
+      <div class="card">
+        <div class="tile" style="background:var(--duo)"><svg viewBox="0 0 24 24"><circle cx="8" cy="8" r="3.5"/><path d="M16 4.5l3.5 3.5L16 11.5 12.5 8z"/><path d="M8 12.5l3.5 3.5L8 19.5 4.5 16z"/><circle cx="16" cy="16" r="3.5"/></svg></div>
+        <div class="t"><b class="rounded">Duo</b><span>Solved · 1:58</span></div>
+        <div class="badge num">1:58</div>
+      </div>
+      <div class="card">
+        <div class="tile" style="background:var(--trail)"><svg viewBox="0 0 24 24"><path d="M5 5h6v6H8v2h8v-2h-3V5h6v6h-3v5H8v3H5z" fill-rule="evenodd"/></svg></div>
+        <div class="t"><b class="rounded">Trail</b><span>Gave up · 6×6</span></div>
+        <div class="muted">Gave up</div>
+      </div>
+      <div class="card">
+        <div class="tile" style="background:var(--quint)"><svg viewBox="0 0 24 24"><path d="M4 5h4v4H4zM10 5h4v4h-4zM16 5h4v4h-4zM4 11h4v4H4zM10 11h4v4h-4zM16 11h4v4h-4zM4 17h4v4H4zM10 17h4v4h-4zM16 17h4v4h-4z"/></svg></div>
+        <div class="t"><b class="rounded">Quint</b><span>Five letters, six guesses</span></div>
+        <div class="play" style="background:var(--quint)">Play</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STARS -->
+  <div class="phone">
+    <div class="cap">Stars · 8×8</div>
+    <div class="nav"><span class="back">‹ Today</span><span class="title"><b class="rounded">Stars</b><span class="timer num">1:23</span></span><span class="help">?</span></div>
+    <div class="board" id="stars"></div>
+    <div class="actions"><div class="btn">Reset</div><div class="btn danger">Give up</div></div>
+    <div class="legend"><span>tap: ✕ → ★ → empty</span><span>drag paints ✕</span></div>
+  </div>
+
+  <!-- DUO -->
+  <div class="phone">
+    <div class="cap">Duo · 6×6</div>
+    <div class="nav"><span class="back">‹ Today</span><span class="title"><b class="rounded">Duo</b><span class="timer num">0:47</span></span><span class="help">?</span></div>
+    <div class="board" id="duo"></div>
+    <div class="actions"><div class="btn">Reset</div><div class="btn danger">Give up</div></div>
+    <div class="legend"><span>● amber</span><span>◆ indigo</span><span>= same · × different</span></div>
+  </div>
+
+  <!-- TRAIL -->
+  <div class="phone">
+    <div class="cap">Trail · 6×6</div>
+    <div class="nav"><span class="back">‹ Today</span><span class="title"><b class="rounded">Trail</b><span class="timer num">0:31</span></span><span class="help">?</span></div>
+    <div class="board" id="trail"></div>
+    <div class="actions"><div class="btn">Reset</div><div class="btn danger">Give up</div></div>
+    <div class="legend"><span>drag from the path's end</span><span>ring marks the next waypoint</span></div>
+  </div>
+
+  <!-- QUINT -->
+  <div class="phone">
+    <div class="cap">Quint · 5 letters, 6 guesses</div>
+    <div class="nav"><span class="back">‹ Today</span><span class="title"><b class="rounded">Quint</b><span class="timer num">1:02</span></span><span class="help">?</span></div>
+    <div class="qgrid" id="quint"></div>
+    <div class="kbd" id="kbd"></div>
+    <div class="legend"><span>🟩 hit</span><span>🟨 near</span><span>⬛️ miss</span></div>
+  </div>
+
+  <!-- RESULTS -->
+  <div class="phone">
+    <div class="cap">Results · Stars</div>
+    <div class="results">
+      <h2 class="rounded">Solved!</h2>
+      <div class="sub">Stars #12 · 8×8</div>
+      <div class="stats">
+        <div><div class="num">1:23</div><small>TIME</small></div>
+        <div><div class="num">834</div><small>SCORE</small></div>
+        <div><div class="num">2</div><small>MISTAKES</small></div>
+      </div>
+      <div class="preview">Kith Stars #12 · 1:23
+⬛️⭐️⬛️⬛️⬛️⬛️⬛️⬛️
+⬛️⬛️⬛️⭐️⬛️⬛️⬛️⬛️
+⭐️⬛️⬛️⬛️⬛️⬛️⬛️⬛️
+⬛️⬛️⬛️⬛️⬛️⭐️⬛️⬛️
+⬛️⬛️⭐️⬛️⬛️⬛️⬛️⬛️
+⬛️⬛️⬛️⬛️⬛️⬛️⬛️⭐️
+⬛️⬛️⬛️⬛️⭐️⬛️⬛️⬛️
+⬛️⬛️⬛️⬛️⬛️⬛️⭐️⬛️
+kith.app/g/stars/12?r=7F3Q</div>
+      <div class="share">Share</div>
+    </div>
+  </div>
+</div>
+
+<section class="swatches">
+  <h2 class="rounded">Stars region palette</h2>
+  <div class="row" id="swatches"></div>
+</section>
+
+<script>
+(function () {
+  const ns = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs, parent) => { const e = document.createElementNS(ns, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent.appendChild(e); return e; };
+  const S = 340;
+
+  // ---- Stars: 8×8 regions, solution stars, a couple of notes and one conflict
+  const regions = [
+    [0,0,0,1,1,1,1,2],
+    [0,3,3,3,1,4,1,2],
+    [0,3,5,3,1,4,4,2],
+    [0,5,5,5,5,4,2,2],
+    [6,6,5,7,5,4,2,8],
+    [6,6,7,7,7,4,8,8],
+    [6,9,9,7,7,8,8,8],
+    [9,9,9,9,7,7,8,8],
+  ];
+  const stars = { "0,1":1, "1,3":1, "2,0":1, "3,5":1, "4,2":1 };
+  const crosses = { "0,0":1, "0,2":1, "1,1":1, "1,2":1, "2,1":1 };
+  const conflict = "4,2";
+  (function drawStars() {
+    const n = 8, c = S / n, svg = el("svg", { viewBox: `0 0 ${S} ${S}` }, document.getElementById("stars"));
+    for (let r = 0; r < n; r++) for (let q = 0; q < n; q++) {
+      el("rect", { x: q*c, y: r*c, width: c, height: c, fill: `var(--r${regions[r][q]})` }, svg);
+    }
+    // thin dividers then thick region edges
+    for (let r = 0; r < n; r++) for (let q = 0; q < n; q++) {
+      if (q < n-1) { const thick = regions[r][q] !== regions[r][q+1];
+        el("line", { x1: (q+1)*c, y1: r*c, x2: (q+1)*c, y2: (r+1)*c, stroke: thick ? "var(--ink)" : "var(--line)", "stroke-width": thick ? 2.5 : 0.75 }, svg); }
+      if (r < n-1) { const thick = regions[r][q] !== regions[r+1][q];
+        el("line", { x1: q*c, y1: (r+1)*c, x2: (q+1)*c, y2: (r+1)*c, stroke: thick ? "var(--ink)" : "var(--line)", "stroke-width": thick ? 2.5 : 0.75 }, svg); }
+    }
+    for (const key in crosses) { const [r, q] = key.split(",").map(Number);
+      const t = el("text", { x: q*c + c/2, y: r*c + c/2 + 1, "text-anchor": "middle", "dominant-baseline": "middle", "font-size": c*0.34, "font-weight": 700, fill: "var(--ink)", opacity: 0.4 }, svg); t.textContent = "✕"; }
+    for (const key in stars) { const [r, q] = key.split(",").map(Number); const bad = key === conflict;
+      if (bad) el("rect", { x: q*c+1.25, y: r*c+1.25, width: c-2.5, height: c-2.5, fill: "none", stroke: "var(--danger)", "stroke-width": 2 }, svg);
+      const t = el("text", { x: q*c + c/2, y: r*c + c/2 + 1, "text-anchor": "middle", "dominant-baseline": "middle", "font-size": c*0.56, fill: bad ? "var(--danger)" : "var(--ink)" }, svg); t.textContent = "★"; }
+  })();
+
+  // ---- Duo: 6×6 with givens, marks, one = and one × badge, one conflicting cell
+  const given = { "0,0":0, "0,3":1, "1,4":0, "2,1":1, "3,2":0, "3,5":1, "4,0":1, "5,3":0 };
+  const marks = { "0,1":0, "0,2":1, "1,0":1, "1,1":0, "2,0":0, "2,2":0, "2,3":1, "1,2":0 };
+  const eq = [[0,1,0,2]], ne = [[1,0,2,0]];
+  const bad = "2,2";
+  (function drawDuo() {
+    const n = 6, c = S / n, svg = el("svg", { viewBox: `0 0 ${S} ${S}` }, document.getElementById("duo"));
+    for (let r = 0; r < n; r++) for (let q = 0; q < n; q++) {
+      const k = `${r},${q}`; const fill = k === bad ? "var(--danger-wash)" : (k in given ? "var(--paper-muted)" : "var(--paper)");
+      el("rect", { x: q*c, y: r*c, width: c, height: c, fill }, svg);
+    }
+    for (let i = 1; i < n; i++) { el("line", { x1: i*c, y1: 0, x2: i*c, y2: S, stroke: "var(--line)", "stroke-width": 0.75 }, svg); el("line", { x1: 0, y1: i*c, x2: S, y2: i*c, stroke: "var(--line)", "stroke-width": 0.75 }, svg); }
+    const all = Object.assign({}, marks, given);
+    for (const k in all) { const [r, q] = k.split(",").map(Number); const cx = q*c + c/2, cy = r*c + c/2, s = c*0.52/2;
+      if (all[k] === 0) el("circle", { cx, cy, r: s, fill: "var(--duo)" }, svg);
+      else el("path", { d: `M${cx} ${cy-s} L${cx+s} ${cy} L${cx} ${cy+s} L${cx-s} ${cy} Z`, fill: "var(--duo-alt)" }, svg); }
+    el("rect", { x: 2*c+1.25, y: 2*c+1.25, width: c-2.5, height: c-2.5, fill: "none", stroke: "var(--danger)", "stroke-width": 2 }, svg);
+    const badge = (p, glyph) => { const x = ((p[1]+p[3])/2 + 0.5)*c, y = ((p[0]+p[2])/2 + 0.5)*c;
+      el("circle", { cx: x, cy: y, r: 10, fill: "var(--paper)", stroke: "var(--line)", "stroke-width": 1 }, svg);
+      const t = el("text", { x, y: y+0.5, "text-anchor": "middle", "dominant-baseline": "middle", "font-size": 12, "font-weight": 800, fill: "var(--ink)" }, svg); t.textContent = glyph; };
+    eq.forEach(p => badge(p, "="));
+    ne.forEach(p => badge(p, "×"));
+  })();
+
+  // ---- Trail: 6×6, path from 1 through 2 heading for 3
+  const waypoints = [[0,0],[2,3],[5,5],[3,0]];
+  const path = [[0,0],[0,1],[0,2],[1,2],[1,3],[2,3],[2,4],[1,4],[0,4],[0,5],[1,5],[2,5]];
+  (function drawTrail() {
+    const n = 6, c = S / n, svg = el("svg", { viewBox: `0 0 ${S} ${S}` }, document.getElementById("trail"));
+    const onPath = new Set(path.map(p => p.join(",")));
+    for (let r = 0; r < n; r++) for (let q = 0; q < n; q++) {
+      el("rect", { x: q*c, y: r*c, width: c, height: c, fill: "var(--paper)" }, svg);
+      if (onPath.has(`${r},${q}`)) el("rect", { x: q*c, y: r*c, width: c, height: c, fill: "var(--trail)", opacity: 0.14 }, svg);
+    }
+    for (let i = 1; i < n; i++) { el("line", { x1: i*c, y1: 0, x2: i*c, y2: S, stroke: "var(--line)", "stroke-width": 0.75 }, svg); el("line", { x1: 0, y1: i*c, x2: S, y2: i*c, stroke: "var(--line)", "stroke-width": 0.75 }, svg); }
+    const d = path.map((p, i) => (i ? "L" : "M") + (p[1]*c + c/2) + " " + (p[0]*c + c/2)).join(" ");
+    el("path", { d, fill: "none", stroke: "var(--trail)", "stroke-width": c*0.42, "stroke-linecap": "round", "stroke-linejoin": "round", opacity: 0.9 }, svg);
+    const end = path[path.length-1]; el("circle", { cx: end[1]*c + c/2, cy: end[0]*c + c/2, r: c*0.25, fill: "var(--trail)" }, svg);
+    waypoints.forEach((w, i) => { const cx = w[1]*c + c/2, cy = w[0]*c + c/2;
+      if (i === 2) el("circle", { cx, cy, r: c*0.33 + 3, fill: "none", stroke: "var(--trail)", "stroke-width": 2.5 }, svg);
+      el("circle", { cx, cy, r: c*0.33, fill: "var(--ink)" }, svg);
+      const t = el("text", { x: cx, y: cy + 1, "text-anchor": "middle", "dominant-baseline": "middle", "font-size": c*0.4, "font-weight": 800, "font-family": "Nunito, system-ui", fill: "var(--disc-text)" }, svg); t.textContent = i + 1; });
+  })();
+
+  // ---- Quint: answer "crane"; guesses slate, trace, crane; row 4 being typed
+  (function drawQuint() {
+    const answer = "crane";
+    const rows = ["slate", "trace", "crane", "br", "", ""];
+    const mark = (g, a) => { const res = Array(5).fill("miss"); const left = {};
+      for (let i = 0; i < 5; i++) { if (g[i] === a[i]) res[i] = "hit"; else left[a[i]] = (left[a[i]] || 0) + 1; }
+      for (let i = 0; i < 5; i++) { if (res[i] === "hit") continue; if (left[g[i]]) { res[i] = "near"; left[g[i]]--; } }
+      return res; };
+    const grid = document.getElementById("quint"); const best = {};
+    rows.forEach((g, r) => { const done = g.length === 5 && r < 3; const m = done ? mark(g, answer) : null;
+      for (let i = 0; i < 5; i++) { const d = document.createElement("div"); d.className = "qt" + (m ? " " + m[i] : (g[i] ? " filled" : ""));
+        d.textContent = g[i] || ""; grid.appendChild(d);
+        if (m) { const rank = { miss: 0, near: 1, hit: 2 }; if ((rank[best[g[i]]] ?? -1) < rank[m[i]]) best[g[i]] = m[i]; } } });
+    const kbd = document.getElementById("kbd");
+    ["qwertyuiop", "asdfghjkl", "zxcvbnm"].forEach((row, i) => { const kr = document.createElement("div"); kr.className = "krow";
+      if (i === 2) { const e = document.createElement("div"); e.className = "key wide"; e.textContent = "enter"; kr.appendChild(e); }
+      for (const ch of row) { const k = document.createElement("div"); k.className = "key" + (best[ch] ? " " + best[ch] : ""); k.textContent = ch; kr.appendChild(k); }
+      if (i === 2) { const b = document.createElement("div"); b.className = "key wide"; b.textContent = "⌫"; kr.appendChild(b); }
+      kbd.appendChild(kr); });
+  })();
+
+  // ---- swatches
+  const names = ["lavender","peach","sky","mint","lemon","rose","sand","aqua","coral","slate"];
+  const host = document.getElementById("swatches");
+  names.forEach((nm, i) => { const d = document.createElement("div"); d.className = "sw"; d.style.background = `var(--r${i})`; d.textContent = `${i} ${nm}`; host.appendChild(d); });
+})();
+</script>

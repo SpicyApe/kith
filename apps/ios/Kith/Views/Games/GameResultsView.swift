@@ -27,12 +27,35 @@ struct GameResultsView: View {
         return active.engine.shareRows()
     }
 
+    /// Quint's answer, for the reveal shown on a fail or give-up (finding B3). Only
+    /// available while this kind's session is still around (the live engine, not the
+    /// server-side result), matching `shareRows` above.
+    private var answer: String? {
+        guard case .quint(let engine)? = model.activeGames[.quint]?.engine else { return nil }
+        return engine.spec.answer
+    }
+
+    /// "Stars #12 · 8×8" — the puzzle number always resolves (from the live session or
+    /// today's `dailyGames` row); the size only while the session is still around. Quint
+    /// shows its guess progress instead of a size (docs/07 §Quint), e.g. "Quint #12 · 4/6".
+    private var subtitle: String {
+        let number = model.activeGames[kind]?.number ?? model.dailyRow(for: kind)?.number ?? 0
+        if kind == .quint, let result {
+            return "\(kind.title) #\(number) · \(AppModel.quintProgress(result))"
+        }
+        if let size = model.activeGames[kind]?.engine.size {
+            return "\(kind.title) #\(number) · \(size)×\(size)"
+        }
+        return "\(kind.title) #\(number)"
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 if let result {
                     VStack(alignment: .leading, spacing: 24) {
                         outcome(result)
+                        statColumns(result)
                         gridPreview
                         streakLine
                         rankTeaser
@@ -68,33 +91,52 @@ struct GameResultsView: View {
     // MARK: Sections
 
     private func outcome(_ result: StoredGameResult) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(AppModel.gameHeadline(result))
-                .font(.largeTitle.weight(.bold))
+                .font(.system(.largeTitle, design: .rounded, weight: .bold))
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("gameResults.headline")
 
-            HStack(alignment: .firstTextBaseline, spacing: 16) {
-                Text("\(result.score)")
-                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                    .monospacedDigit()
-                    .accessibilityLabel("Score \(result.score)")
-                    .accessibilityIdentifier("gameResults.score")
-                Text(AppModel.clock(result.elapsedMs))
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .accessibilityLabel("Time \(AppModel.clock(result.elapsedMs))")
-                    .accessibilityIdentifier("gameResults.time")
-            }
+            Text(subtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
 
-            if result.mistakes > 0 {
-                Text(result.mistakes == 1 ? "1 mistake" : "\(result.mistakes) mistakes")
-                    .font(.subheadline)
+            // The word is otherwise never revealed on a fail or give-up (finding B3).
+            if kind == .quint, !result.solved, let answer {
+                Text("The word was \(answer.uppercased())")
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .monospacedDigit()
+                    .accessibilityIdentifier("gameResults.answer")
             }
         }
+    }
+
+    /// Three stat columns — Time, Score, Mistakes — each a rounded-bold 34 pt number over a
+    /// caption label (docs/08-visual-design.md §"Results (grid games)").
+    private func statColumns(_ result: StoredGameResult) -> some View {
+        HStack(spacing: 0) {
+            statColumn(AppModel.clock(result.elapsedMs), label: "Time")
+                .accessibilityLabel("Time \(AppModel.clock(result.elapsedMs))")
+                .accessibilityIdentifier("gameResults.time")
+            statColumn("\(result.score)", label: "Score")
+                .accessibilityLabel("Score \(result.score)")
+                .accessibilityIdentifier("gameResults.score")
+            statColumn("\(result.mistakes)", label: "Mistakes")
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func statColumn(_ value: String, label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.system(size: 34, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(Theme.ink)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     /// The same rows the share text carries, so what you post is what you saw.
@@ -110,7 +152,9 @@ struct GameResultsView: View {
                         .minimumScaleFactor(0.5)
                 }
             }
-            .kithCard()
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.paperMuted, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Your grid, \(rows.count) rows")
         }
@@ -161,7 +205,8 @@ struct GameResultsView: View {
                     .padding(.vertical, 16)
                     .frame(maxWidth: .infinity)
                     .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.kithAccent)
+                        RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+                            .fill(Theme.color(for: kind))
                     )
             }
             .simultaneousGesture(TapGesture().onEnded {

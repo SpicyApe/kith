@@ -113,3 +113,71 @@ grouped lists, `.tint` from the accent, standard haptics (selection on tile move
 on solve), full dark mode, VoiceOver labels and values on every grid cell ("row 3 column 5,
 star"), `accessibilityDifferentiateWithoutColor` handled by adding glyphs to region colours,
 Reduce Motion respected, minimum 44-pt targets, safe-area-correct layouts on all iPhones.
+
+## Quint (Wordle-style) — added 2026-09-13
+
+A fifth daily game; the hub, boards, streak and share rules above apply with "four" read as
+"five". Original name, art and copy; the mechanic is the classic five-letter guessing game.
+
+### Rules
+- One hidden five-letter word per day. Six guesses. Each guess must be a real word (the
+  8,636-word ENABLE five-letter list; ENABLE is public domain).
+- After each guess every letter is marked: **hit** (right letter, right place), **near**
+  (in the word, other place), **miss** (not in the word). Duplicate letters are marked the
+  standard way: hits first, then nears from left to right while copies remain.
+- The on-screen keyboard shows each key's best mark so far. Not-a-word guesses shake the row
+  and are not counted. No hard mode.
+- Solved when a guess equals the word. Failed after six wrong guesses (not a give-up: the
+  word is revealed either way).
+
+### Scoring
+`score = max(100, 1000 − 100 × (guesses − 1) − min(elapsed_seconds, 300))`, so one guess is
+1000 before time, six guesses 500. A fail scores 100 and counts as played; give-up also 100.
+Mistakes on the results screen = wrong guesses.
+
+### Words
+`supabase/functions/_shared/games/words.ts` and `packages/GridGames/Sources/GridGames/Words.swift`
+hold identical lists: `ANSWERS` (1,373 common words in frequency order, from the Google
+Trillion Word corpus list intersected with ENABLE, minus plurals, simple past forms and a
+blocklist) and `ALLOWED` (all 8,636). Regenerate: fetch `enable1.txt` (dolph/dictionary) and
+`20k.txt` (first20hours/google-10000-english), keep `^[a-z]{5}$` words in ENABLE in
+frequency order, drop `…s` with a 4-letter stem in ENABLE, `…ed`/`…ly` with a stem in ENABLE,
+and the blocklist (slurs, sexual and medical terms, and a hand list of first names, surnames, places and brands), cap at 1,500.
+
+### Generation
+`generateQuint(date, attempt)` picks `ANSWERS[rng(seed) % ANSWERS.length]`, skipping any word
+used in the previous 365 days (the generator reads recent `daily_games.solution` for `quint`).
+No solver needed; uniqueness is trivial.
+
+### Wire formats
+- Spec `{ "n": 5, "guesses": 6, "answer": "crane" }`. **The answer is in the spec**, the same
+  offline-play trade-off Lineup makes with `correctOrder` (docs/04): marks are computed on the
+  device with no round trip per guess. `solution` duplicates it as `{ "word": "crane" }` so
+  `submit-game`'s stored-solution check keeps working. As with Lineup's `correctOrder`, the
+  answer is readable up to 14 h before its date through the `daily_games` window, the same
+  window Lineup's order has.
+- Client submits `{ "guesses": ["slate", "crane"] }` (lowercase, 1–6 entries). The server
+  validates: every guess in `ALLOWED`, no guess after the solving one, at most six; `solved`
+  iff the last guess equals the word. A six-guess miss is `solved: false, gaveUp: false`.
+- `mistakes` in the body is ignored for quint and recomputed as wrong guesses.
+- Share text — header only, both platforms byte-identical (rows and link as elsewhere):
+  ```
+  Kith Quint #12 · 4/6 · 1:02       (solved in 4 guesses)
+  Kith Quint #12 · X/6 · 1:02       (six-guess fail — literal "X", not "6/6")
+  Kith Quint #12 · 3/6 · gave up    (gave up after 3 rows played)
+  ```
+  The guess count/`X` always comes before the time-or-"gave up" segment. Dark squares are ⬛️
+  as elsewhere.
+
+### Data model
+`daily_games`, `game_starts`, `game_results` accept `game = 'quint'` (migration 0007), the
+board picker accepts `'quint'`, and Total sums five games.
+
+### Client
+`QuintEngine` in GridGames: `guesses`, `current` (the row being typed), `type(_:)`,
+`backspace()`, `submit() -> SubmitOutcome { .accepted, .notAWord, .tooShort, .finished }`,
+`marks(for:)`, `keyMarks`, `isComplete`, `isFailed`, `answer` (`{guesses}`), `shareRows()`.
+Screen: 6×5 tile grid with the flip reveal (skipped under Reduce Motion), a three-row
+keyboard with ENTER and ⌫, tiles 62 pt on a 390-pt phone, identifiers `quint.tile.<r>.<c>`,
+`quint.key.<letter>`, `quint.key.enter`, `quint.key.backspace`. Colours from docs/08:
+hit = `trail` green, near = `duo` amber, miss = `paperMuted` with `ink` text.

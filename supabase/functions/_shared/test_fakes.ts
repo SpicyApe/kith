@@ -456,6 +456,19 @@ export class FakeGenerateStore implements GenerateStore {
     const key = this.gameKey(date, game);
     return Promise.resolve(this.gameSeeds.has(key) ? this.gameSeeds.get(key)! : null);
   }
+
+  /** Words `recentQuintWords` should report, regardless of the seeded games/dates (tests set this directly). */
+  recentQuintWordsData = new Set<string>();
+
+  recentQuintWords(_fromDate: string, excludeDate?: string): Promise<Set<string>> {
+    const words = new Set(this.recentQuintWordsData);
+    if (excludeDate !== undefined) {
+      const entry = this.gamesData.get(this.gameKey(excludeDate, "quint"));
+      const word = (entry?.g.solution as { word?: string } | null)?.word;
+      if (typeof word === "string") words.delete(word);
+    }
+    return Promise.resolve(words);
+  }
 }
 
 // ---------------------------------------------------------------------------

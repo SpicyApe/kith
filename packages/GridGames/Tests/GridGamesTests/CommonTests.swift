@@ -8,19 +8,28 @@ final class CommonTests: XCTestCase {
     // MARK: - GameKind
 
     func testAllCasesOrder() {
-        XCTAssertEqual(GameKind.allCases, [.stars, .duo, .trail])
+        XCTAssertEqual(GameKind.allCases, [.stars, .duo, .trail, .quint])
     }
 
     func testTitles() {
         XCTAssertEqual(GameKind.stars.title, "Stars")
         XCTAssertEqual(GameKind.duo.title, "Duo")
         XCTAssertEqual(GameKind.trail.title, "Trail")
+        XCTAssertEqual(GameKind.quint.title, "Quint")
     }
 
     func testSymbolNames() {
         XCTAssertEqual(GameKind.stars.symbolName, "star.fill")
         XCTAssertEqual(GameKind.duo.symbolName, "circle.lefthalf.filled")
         XCTAssertEqual(GameKind.trail.symbolName, "point.topleft.down.to.point.bottomright.curvepath")
+        XCTAssertEqual(GameKind.quint.symbolName, "textformat.abc")
+    }
+
+    func testIsTimeOnlyScored() {
+        XCTAssertTrue(GameKind.stars.isTimeOnlyScored)
+        XCTAssertTrue(GameKind.duo.isTimeOnlyScored)
+        XCTAssertTrue(GameKind.trail.isTimeOnlyScored)
+        XCTAssertFalse(GameKind.quint.isTimeOnlyScored)
     }
 
     // MARK: - GridPoint

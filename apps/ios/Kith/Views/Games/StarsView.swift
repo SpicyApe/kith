@@ -1,8 +1,10 @@
-// StarsView.swift — Queens-style grid (docs/07 §"Stars").
+// StarsView.swift — Queens-style grid (docs/07 §"Stars", docs/08 §"Stars region palette").
 //
 // Tap cycles empty → ✕ → ★ → empty; dragging paints ✕ across empty cells. Conflicting
 // stars get a red ring as well as the colour, and every region carries a glyph so the
-// board is readable with `accessibilityDifferentiateWithoutColor` on.
+// board is readable with `accessibilityDifferentiateWithoutColor` on. Cells are flush
+// (zero spacing); the region-outline line system is drawn once, above the cells, by
+// `GridMetrics.lineOverlay(regions:)`.
 
 import Foundation
 import GridGames
@@ -26,9 +28,7 @@ struct StarsView: View {
     var body: some View {
         GeometryReader { proxy in
             let side = min(proxy.size.width, proxy.size.height)
-            let metrics = GridMetrics(size: engine.spec.n,
-                                      spacing: GridMetrics.spacing(for: engine.spec.n, base: 2),
-                                      side: side)
+            let metrics = GridMetrics(size: engine.spec.n, spacing: 0, side: side)
 
             board(metrics)
                 .frame(width: side, height: side)
@@ -36,23 +36,27 @@ struct StarsView: View {
         }
         .aspectRatio(1, contentMode: .fit)
         .frame(maxWidth: .infinity)
-        .sensoryFeedback(.selection, trigger: model.activeGame?.moves ?? 0)
-        .sensoryFeedback(.warning, trigger: model.activeGame?.mistakes ?? 0)
+        .sensoryFeedback(.selection, trigger: model.activeGames[.stars]?.moves ?? 0)
+        .sensoryFeedback(.warning, trigger: model.activeGames[.stars]?.mistakes ?? 0)
         .sensoryFeedback(.success, trigger: engine.isComplete)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Stars grid, \(engine.spec.n) by \(engine.spec.n)")
     }
 
     private func board(_ metrics: GridMetrics) -> some View {
-        VStack(spacing: metrics.spacing) {
-            ForEach(0..<engine.spec.n, id: \.self) { row in
-                HStack(spacing: metrics.spacing) {
-                    ForEach(0..<engine.spec.n, id: \.self) { column in
-                        cell(GridPoint(row: row, col: column), metrics: metrics)
+        ZStack {
+            VStack(spacing: 0) {
+                ForEach(0..<engine.spec.n, id: \.self) { row in
+                    HStack(spacing: 0) {
+                        ForEach(0..<engine.spec.n, id: \.self) { column in
+                            cell(GridPoint(row: row, col: column), metrics: metrics)
+                        }
                     }
                 }
             }
+            metrics.lineOverlay(regions: engine.spec.regions)
         }
+        .gridBoardChrome()
         .contentShape(Rectangle())
         .gesture(gesture(metrics))
     }
@@ -63,13 +67,12 @@ struct StarsView: View {
         let isConflicting = mark == .star && conflicts.contains(point)
 
         return ZStack {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(RegionStyle.color(region))
+            Theme.region(region)
 
             if differentiateWithoutColor {
                 Image(systemName: RegionStyle.symbol(region))
                     .font(.system(size: max(8, metrics.cell * 0.22)))
-                    .foregroundStyle(Color.primary.opacity(0.35))
+                    .foregroundStyle(Theme.ink.opacity(0.35))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .padding(3)
             }
@@ -80,19 +83,20 @@ struct StarsView: View {
             case .cross:
                 Image(systemName: "xmark")
                     .font(.system(size: max(9, metrics.cell * 0.34), weight: .semibold))
-                    .foregroundStyle(Color.primary.opacity(0.35))
+                    .foregroundStyle(Theme.ink.opacity(0.4))
             case .star:
                 Image(systemName: "star.fill")
-                    .font(.system(size: max(11, metrics.cell * 0.52)))
-                    .foregroundStyle(isConflicting ? Color.red : Color.primary)
+                    .font(.system(size: max(11, metrics.cell * 0.56)))
+                    .foregroundStyle(isConflicting ? Theme.danger : Theme.ink)
+            }
+
+            if isConflicting {
+                Rectangle()
+                    .strokeBorder(Theme.danger, lineWidth: 2)
             }
         }
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(isConflicting ? Color.red : Color.primary.opacity(0.12),
-                              lineWidth: isConflicting ? 2.5 : 0.5)
-        )
         .frame(width: metrics.cell, height: metrics.cell)
+        .clipped()
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: mark)
         .accessibilityElement(children: .ignore)
         .accessibilityAddTraits(.isButton)

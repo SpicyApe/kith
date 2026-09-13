@@ -2,11 +2,14 @@
 //
 // Everything runs against `FakeKithAPI`'s tiny deterministic puzzles (TESTING.md §3,
 // "Games hub"): Stars 5×5 with the solution `[1, 3, 0, 2, 4]`, Duo 6×6 with six blanks on
-// the leading diagonal, Trail 3×3 with a forced snake.
+// the leading diagonal, Trail 3×3 with a forced snake, and Quint with the fixed answer
+// "crane".
 
 import Foundation
 import GridGames
 import KithCore
+import SwiftUI
+import UIKit
 import XCTest
 @testable import Kith
 
@@ -34,17 +37,21 @@ final class GamesTests: XCTestCase {
 
     // MARK: 1. The hub
 
-    func testHubListsFourGames() async throws {
+    func testHubListsFiveGames() async throws {
         let harness = await ready()
         defer { harness.cleanUp() }
         let model = harness.model
 
-        XCTAssertEqual(HubGame.allCases.count, 4)
-        XCTAssertEqual(model.dailyGames.count, 3)
+        // Lineup plus the four grid games (Stars, Duo, Trail, Quint).
+        XCTAssertEqual(HubGame.allCases.count, 5)
+        XCTAssertEqual(model.dailyGames.count, 4)
         for kind in GameKind.allCases {
             XCTAssertTrue(model.isAvailable(kind), "\(kind.rawValue) should be available today")
             XCTAssertTrue(model.isHubRowEnabled(.grid(kind)))
-            XCTAssertEqual(model.hubStatus(for: .grid(kind)), "Not played")
+            // Quint's unplayed status line is its own copy (docs/08); the other three
+            // grid games just say "Not played".
+            let expected = kind == .quint ? "Five letters, six guesses" : "Not played"
+            XCTAssertEqual(model.hubStatus(for: .grid(kind)), expected)
         }
         XCTAssertEqual(model.hubStatus(for: .lineup), "Not played")
     }
@@ -367,6 +374,117 @@ final class GamesTests: XCTestCase {
                        "{\"path\":[[0,0],[0,1],[0,2],[1,2],[1,1],[1,0],[2,0],[2,1],[2,2]]}")
     }
 
+    // MARK: Quint
+
+    /// Types a whole guess through the model mutators, one letter at a time, and submits it.
+    private func typeAndSubmit(_ guess: String, model: AppModel) -> QuintEngine.SubmitOutcome {
+        for letter in guess { model.quintType(letter) }
+        return model.quintSubmit()
+    }
+
+    func testSolveFakeQuintInTwoGuessesSubmitsAnswerAndScore() async throws {
+        let harness = await ready()
+        defer { harness.cleanUp() }
+        let model = harness.model
+
+        await model.startGame(.quint)
+
+        XCTAssertEqual(typeAndSubmit("slate", model: model), .accepted)
+        XCTAssertEqual(model.activeGame?.mistakes, 1, "the wrong first guess is one mistake")
+        XCTAssertEqual(typeAndSubmit("crane", model: model), .accepted)
+
+        guard case .quint(let engine) = try XCTUnwrap(model.activeGame).engine else {
+            return XCTFail("Expected a QuintEngine")
+        }
+        XCTAssertTrue(engine.isSolved)
+
+        // The accepted guess that solves the puzzle hands off to `finishGame()` on a
+        // detached `Task` (the same completion path Done uses elsewhere); give it a beat.
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        let submission = try XCTUnwrap(harness.api.gameSubmissions.last)
+        XCTAssertEqual(submission.game, .quint)
+        XCTAssertFalse(submission.gaveUp)
+        XCTAssertEqual(submission.answerJSON, "{\"guesses\":[\"slate\",\"crane\"]}")
+
+        let stored = try XCTUnwrap(model.result(for: .quint))
+        XCTAssertTrue(stored.solved)
+        XCTAssertFalse(stored.gaveUp)
+        XCTAssertEqual(stored.mistakes, 1)
+        XCTAssertEqual(stored.score, GameScoring.quintScore(
+            elapsedMs: stored.elapsedMs, guesses: 2, solved: true, gaveUp: false
+        ))
+    }
+
+    /// Regression for finding B1: `myGameResults`'s `GameResultSummary` now carries
+    /// `mistakes`, and `AppModel.stored(from:)` must read it rather than hard-coding 0 — a
+    /// refresh (the hub's periodic resync) must not blank out Quint's guess count in
+    /// `hubStatus`.
+    func testRefreshGameResultsKeepsQuintGuessCountAfterSolving() async throws {
+        let harness = await ready()
+        defer { harness.cleanUp() }
+        let model = harness.model
+
+        await model.startGame(.quint)
+        XCTAssertEqual(typeAndSubmit("slate", model: model), .accepted)
+        XCTAssertEqual(typeAndSubmit("crane", model: model), .accepted)
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        let stored = try XCTUnwrap(model.result(for: .quint))
+        let expected = "Solved in 2 · \(AppModel.clock(stored.elapsedMs))"
+        XCTAssertEqual(model.hubStatus(for: .grid(.quint)), expected)
+
+        await model.refreshGameResults()
+
+        XCTAssertEqual(model.hubStatus(for: .grid(.quint)), expected)
+    }
+
+    func testQuintNotAWordShakesWithoutAddingAGuess() async throws {
+        let harness = await ready()
+        defer { harness.cleanUp() }
+        let model = harness.model
+
+        await model.startGame(.quint)
+        let outcome = typeAndSubmit("zzzzz", model: model)
+
+        XCTAssertEqual(outcome, .notAWord)
+        XCTAssertEqual(model.activeGame?.quintShake, 1)
+        guard case .quint(let engine) = try XCTUnwrap(model.activeGame).engine else {
+            return XCTFail("Expected a QuintEngine")
+        }
+        XCTAssertTrue(engine.guesses.isEmpty, "a not-a-word guess is never added to `guesses`")
+        XCTAssertEqual(engine.current, "zzzzz", "the row is left as typed for the player to fix")
+    }
+
+    func testQuintSixWrongGuessesFails() async throws {
+        let harness = await ready()
+        defer { harness.cleanUp() }
+        let model = harness.model
+
+        await model.startGame(.quint)
+        let wrongGuesses = ["slate", "shine", "clomp", "burnt", "vixen", "whorl"]
+        for guess in wrongGuesses {
+            XCTAssertEqual(typeAndSubmit(guess, model: model), .accepted)
+        }
+
+        guard case .quint(let engine) = try XCTUnwrap(model.activeGame).engine else {
+            return XCTFail("Expected a QuintEngine")
+        }
+        XCTAssertTrue(engine.isFailed)
+
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        let submission = try XCTUnwrap(harness.api.gameSubmissions.last)
+        XCTAssertEqual(submission.game, .quint)
+        XCTAssertFalse(submission.gaveUp, "a six-guess miss is not a give-up (docs/07)")
+
+        let stored = try XCTUnwrap(model.result(for: .quint))
+        XCTAssertFalse(stored.solved)
+        XCTAssertFalse(stored.gaveUp)
+        XCTAssertEqual(stored.score, 100)
+        XCTAssertEqual(stored.mistakes, 6)
+    }
+
     // MARK: Stars paint-drag
 
     func testStarsPaintCross() async throws {
@@ -471,5 +589,45 @@ final class GamesTests: XCTestCase {
         // The heatmap has one cell per day of the last eight weeks and must not lose the
         // Lineup history when grid-game days are folded in.
         XCTAssertEqual(model.heatmap.count, 56)
+    }
+
+    // MARK: Visual design tokens (docs/08-visual-design.md)
+
+    /// `Theme.region(i)` must give every one of the ten Stars regions a visibly distinct
+    /// fill (docs/08 §"Stars region palette"), and wrap back to region 0's colour at index
+    /// 10 rather than trapping or defaulting to black.
+    func testStarsRegionPaletteIsDistinctAndWraps() throws {
+        let components = try (0..<10).map { try Self.rgba(Theme.region($0)) }
+        for i in 0..<components.count {
+            for j in (i + 1)..<components.count {
+                XCTAssertNotEqual(components[i], components[j],
+                                   "regions \(i) and \(j) resolved to the same colour")
+            }
+        }
+        XCTAssertEqual(try Self.rgba(Theme.region(10)), components[0])
+        XCTAssertEqual(try Self.rgba(Theme.region(-1)), components[9])
+    }
+
+    /// Every `HubGame` (Lineup plus the three grid games) must resolve to a colour via
+    /// `Theme.color(for:)`, and the three grid games must agree with `Theme.color(for: GameKind)`.
+    func testThemeColorCoversEveryHubGame() throws {
+        for game in HubGame.allCases {
+            _ = try Self.rgba(Theme.color(for: game))
+        }
+        for kind in GameKind.allCases {
+            XCTAssertEqual(try Self.rgba(Theme.color(for: .grid(kind))), try Self.rgba(Theme.color(for: kind)))
+        }
+    }
+
+    /// Resolves a `Color` to sRGB components via `UIColor`, at a fixed light-mode trait
+    /// collection so the dynamic `UIColor { trait in … }` closures in `Theme` are pinned to
+    /// one branch for comparison.
+    private static func rgba(_ color: Color) throws -> [CGFloat] {
+        let resolved = UIColor(color).resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard resolved.getRed(&r, green: &g, blue: &b, alpha: &a) else {
+            throw XCTSkip("Color did not resolve to RGB components")
+        }
+        return [r, g, b, a]
     }
 }

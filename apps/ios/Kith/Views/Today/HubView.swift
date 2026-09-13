@@ -1,6 +1,6 @@
 // HubView.swift — the Today tab is now the games hub (docs/07 §"Product rules",
-// PLAN-games.md "Screens"). Four rows: Lineup, Stars, Duo, Trail. Tapping one pushes
-// its play screen onto this stack.
+// docs/08 §"Hub (Today tab)"). A pill row (streak + countdown), then one card per game in
+// a plain list section. Tapping a row pushes its play screen onto this stack.
 
 import Foundation
 import GridGames
@@ -21,13 +21,18 @@ struct HubView: View {
         NavigationStack {
             List {
                 Section {
-                    headerCard
-                        .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
+                    pillRow
+                        .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 4, trailing: 16))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                 }
 
-                Section("Today's games") {
+                Section {
                     ForEach(HubGame.allCases, id: \.self) { game in
                         row(for: game)
+                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
                     }
                 }
 
@@ -37,9 +42,11 @@ struct HubView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 }
             }
-            .listStyle(.insetGrouped)
+            .listStyle(.plain)
             .navigationTitle("Today")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(for: HubDestination.self) { destination in
@@ -57,30 +64,31 @@ struct HubView: View {
         .task { await loadIfNeeded() }
     }
 
-    // MARK: Header
+    // MARK: Pill row
 
-    private var headerCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(AppModel.headerDate(model.today))
-                .font(.headline)
+    private var pillRow: some View {
+        HStack(spacing: 10) {
+            Label("\(model.streak)", systemImage: "flame.fill")
+                .font(.subheadline.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(Theme.ink)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Theme.paperMuted, in: Capsule())
+                .accessibilityLabel("\(model.streak) day streak")
+                .accessibilityIdentifier("hub.streak")
 
-            HStack(spacing: 16) {
-                Label("\(model.streak)", systemImage: "flame.fill")
-                    .font(.subheadline.weight(.semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(Color.kithAccent)
-                    .accessibilityLabel("\(model.streak) day streak")
-                    .accessibilityIdentifier("hub.streak")
-
-                TimelineView(.periodic(from: .now, by: 60)) { _ in
-                    Text("Next games in \(model.countdownText)")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("hub.countdown")
-                }
-
-                Spacer(minLength: 0)
+            TimelineView(.periodic(from: .now, by: 60)) { _ in
+                Text("New games in \(model.countdownText)")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.ink)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Theme.paperMuted, in: Capsule())
+                    .accessibilityIdentifier("hub.countdown")
             }
+
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
@@ -95,31 +103,107 @@ struct HubView: View {
 
         NavigationLink(value: destination(for: game)) {
             HStack(spacing: 14) {
-                Image(systemName: game.symbolName)
-                    .font(.title3)
-                    .foregroundStyle(Color.kithAccent)
-                    .frame(width: 32, height: 32)
+                RoundedRectangle(cornerRadius: Theme.cardRadius - 4, style: .continuous)
+                    .fill(Theme.color(for: game))
+                    .frame(width: 56, height: 56)
+                    .overlay(
+                        Image(systemName: hubIconSymbol(for: game))
+                            .font(.title2)
+                            .foregroundStyle(Color.white)
+                    )
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(game.title)
-                        .font(.body.weight(.medium))
+                        .font(.title3.bold())
                     Text(status)
-                        .font(.footnote)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 0)
+
+                trailing(for: game)
             }
             // 44 pt minimum, and the row keeps that height at every Dynamic Type size.
-            .frame(minHeight: 44)
+            .frame(minHeight: 56)
+            .padding(12)
+            .background(Theme.paper, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+                    .strokeBorder(Theme.ink.opacity(0.08), lineWidth: 1)
+            )
             .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .disabled(!enabled)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(game.title), \(status)")
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("hub.row.\(game.slug)")
+    }
+
+    /// The right-hand indicator: a time/score badge once played, "Gave up" in secondary
+    /// text, or a filled "Play" capsule in the game's colour while it is still open.
+    @ViewBuilder
+    private func trailing(for game: HubGame) -> some View {
+        switch game {
+        case .lineup:
+            if let row = model.myResults.first(where: { $0.puzzle_date == model.today }) {
+                if row.solved {
+                    badge("\(row.score)")
+                } else {
+                    Text("Out of tries")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                playCapsule(for: game)
+            }
+        case .grid(let kind):
+            if let stored = model.result(for: kind) {
+                if stored.gaveUp {
+                    Text("Gave up")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    badge(AppModel.clock(stored.elapsedMs))
+                }
+            } else if model.isAvailable(kind) {
+                playCapsule(for: game)
+            }
+        }
+    }
+
+    private func badge(_ text: String) -> some View {
+        Text(text)
+            .font(.subheadline.monospacedDigit().weight(.semibold))
+            .foregroundStyle(Theme.ink)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Theme.paperMuted, in: Capsule())
+    }
+
+    private func playCapsule(for game: HubGame) -> some View {
+        Text("Play")
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(Color.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .background(Theme.color(for: game), in: Capsule())
+    }
+
+    /// docs/08's hub icons are a purely visual choice independent of `GameKind.symbolName`
+    /// (a frozen `GridGames` contract used elsewhere for its own purposes), so the mapping
+    /// lives here rather than on the enum.
+    private func hubIconSymbol(for game: HubGame) -> String {
+        switch game {
+        case .lineup: return "square.stack.3d.up"
+        case .grid(.stars): return "star.fill"
+        case .grid(.duo): return "circle.grid.2x2.fill"
+        case .grid(.trail): return "point.topleft.down.to.point.bottomright.curvepath.fill"
+        case .grid(.quint): return "square.grid.3x3.fill"
+        }
     }
 
     private func destination(for game: HubGame) -> HubDestination {

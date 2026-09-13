@@ -213,6 +213,26 @@ export class SupabaseGenerateStore implements GenerateStore {
     }
   }
 
+  async recentQuintWords(fromDate: string, excludeDate?: string): Promise<Set<string>> {
+    const since = addDaysUTC(fromDate, -365);
+    let query = this.client
+      .from("daily_games")
+      .select("solution")
+      .eq("game", "quint")
+      .gte("date", since);
+    if (excludeDate !== undefined) {
+      query = query.neq("date", excludeDate);
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+    const words = new Set<string>();
+    for (const row of data ?? []) {
+      const word = (row.solution as { word?: string } | null)?.word;
+      if (typeof word === "string") words.add(word);
+    }
+    return words;
+  }
+
   async gameSeedOf(date: string, game: GameKind): Promise<number | null> {
     const { data, error } = await this.client
       .from("daily_games")
