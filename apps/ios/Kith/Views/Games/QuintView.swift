@@ -259,11 +259,12 @@ struct QuintView: View {
             Text("ENTER")
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundStyle(Theme.ink)
-                .frame(maxWidth: .infinity, minHeight: 46)
-                .frame(minWidth: 54)
+                // Fixed width on purpose: a flexible width plus `layoutPriority(1)` on the two
+                // wide keys let them absorb the whole row and squeezed the seven letter keys
+                // to zero width (CI: "quint.key.c" had a 0 × 46 frame).
+                .frame(width: 54, height: 46)
                 .background(Theme.paperMuted, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
-        .layoutPriority(1)
         .accessibilityLabel("Enter")
         .accessibilityIdentifier("quint.key.enter")
     }
@@ -275,11 +276,9 @@ struct QuintView: View {
             Image(systemName: "delete.left")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.ink)
-                .frame(maxWidth: .infinity, minHeight: 46)
-                .frame(minWidth: 54)
+                .frame(width: 54, height: 46)
                 .background(Theme.paperMuted, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
-        .layoutPriority(1)
         .accessibilityLabel("Backspace")
         .accessibilityIdentifier("quint.key.backspace")
     }
