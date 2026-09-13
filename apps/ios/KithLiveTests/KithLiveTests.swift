@@ -144,8 +144,17 @@ import XCTest
                 XCTAssertNotNil(movedTile,
                                 "Step 2 (round \(round)): none of today.tile.0.down … today.tile.3.down was present and enabled — are the -uiTestingControls move buttons rendering?")
 
+                // A tap that lands while the pushed screen is still settling can be dropped
+                // (the hermetic suite masks this with test iterations; this one has none), so
+                // re-tap once if the order did not change within a few seconds.
+                let enabled = NSPredicate(format: "isEnabled == true")
+                let firstTry = XCTNSPredicateExpectation(predicate: enabled, object: lockIn)
+                if XCTWaiter().wait(for: [firstTry], timeout: 5) != .completed, let movedTile {
+                    step("2. round \(round): re-tapping tile \(movedTile) down")
+                    app.buttons["today.tile.\(movedTile).down"].tap()
+                }
                 awaitEnabled(lockIn,
-                             "Step 2 (round \(round)): today.lockIn never became enabled after moving tile \(movedTile ?? -1) down")
+                             "Step 2 (round \(round)): today.lockIn never became enabled after moving tile \(movedTile ?? -1) down; app status: \(element("debug.status").exists ? element("debug.status").label : "n/a")")
                 lockIn.tap()
                 step("2. round \(round) locked in")
 
