@@ -462,7 +462,7 @@ public final class SupabaseKithAPI: KithAPI {
         let request = HTTPRequest(
             method: .get,
             url: url(path: "rest/v1/results", queryItems: [
-                URLQueryItem(name: "select", value: "puzzle_date,tries,solved,score"),
+                URLQueryItem(name: "select", value: "puzzle_date,tries,solved,score,elapsed_ms"),
                 URLQueryItem(name: "puzzle_date", value: "gte.\(sinceDate)"),
                 URLQueryItem(name: "order", value: "puzzle_date.asc"),
             ]),

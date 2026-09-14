@@ -166,6 +166,16 @@ public struct ResultSummary: Codable, Sendable, Equatable {
     public let tries: Int
     public let solved: Bool
     public let score: Int
+    /// Optional so older fixtures decode; the hub shows this instead of points.
+    public let elapsed_ms: Int?
+
+    public init(puzzle_date: String, tries: Int, solved: Bool, score: Int, elapsed_ms: Int? = nil) {
+        self.puzzle_date = puzzle_date
+        self.tries = tries
+        self.solved = solved
+        self.score = score
+        self.elapsed_ms = elapsed_ms
+    }
 }
 
 // MARK: Enumerations shared with the server

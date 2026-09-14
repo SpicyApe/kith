@@ -200,6 +200,7 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         var tries: Int
         var solved: Bool
         var score: Int
+        var elapsed_ms: Int? = nil
     }
 
     /// Encodes a seed and decodes it as the real KithCore type. Optional seed fields are
@@ -632,7 +633,8 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
                 puzzle_date: stored.puzzleDate,
                 tries: stored.tries,
                 solved: stored.solved,
-                score: stored.score
+                score: stored.score,
+                elapsed_ms: stored.elapsedMs
             ))
         }
         let filtered = seeds

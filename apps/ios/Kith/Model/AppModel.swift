@@ -691,8 +691,11 @@ final class AppModel {
             guard let row = myResults.first(where: { $0.puzzle_date == today }) else {
                 return "Not played"
             }
+            // Time, not points (docs/07 boards are time-based); older rows without
+            // elapsed_ms fall back to the tries alone.
             let tries = row.tries == 1 ? "1 try" : "\(row.tries) tries"
-            return row.solved ? "Solved in \(tries) · \(row.score)" : "Out of tries · \(row.score)"
+            let time = row.elapsed_ms.map { " · \(Self.clock($0))" } ?? ""
+            return row.solved ? "Solved in \(tries)\(time)" : "Out of tries\(time)"
         case .grid(let kind):
             if let stored = result(for: kind) {
                 if stored.gaveUp { return "Gave up" }
