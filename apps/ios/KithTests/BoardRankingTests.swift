@@ -158,4 +158,15 @@ final class BoardRankingTests: XCTestCase {
         XCTAssertEqual(AppModel.yesterdayLabel(for: solvedYesterday), "yesterday 1:12")
         XCTAssertEqual(AppModel.yesterdayLabel(for: notSolvedYesterday), "yesterday —")
     }
+
+    /// docs/07 "Added later the same day": on the board's Yesterday toggle, the same
+    /// `prev_*` fields describe the day *before* yesterday, so `BoardView` swaps the
+    /// caption's prefix rather than reusing "yesterday" verbatim.
+    func testSecondaryLabelUsesCallerPrefix() {
+        let solved = solvedRow("u1", name: "A", elapsedMs: 45_000, prevElapsedMs: 72_000)
+        let notSolved = solvedRow("u2", name: "B", elapsedMs: 45_000)
+
+        XCTAssertEqual(AppModel.secondaryLabel(for: solved, prefix: "day before"), "day before 1:12")
+        XCTAssertEqual(AppModel.secondaryLabel(for: notSolved, prefix: "day before"), "day before —")
+    }
 }

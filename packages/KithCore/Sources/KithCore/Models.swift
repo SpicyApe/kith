@@ -77,13 +77,19 @@ public struct BoardRow: Codable, Sendable, Equatable {
     public let prev_elapsed_ms: Int?
     public let prev_solved_count: Int?
     public let prev_played_count: Int?
+    // Migration 0009: the member's current streak and avatar version (0 = no picture).
+    public let streak: Int?
+    public let avatar_version: Int?
 
     public init(user_id: String, display_name: String, score: Int, tries: Int? = nil,
                 elapsed_ms: Int? = nil, attempts: [Attempt]? = nil, played: Bool,
                 rank: Int? = nil, prev_rank: Int? = nil,
                 solved_count: Int? = nil, played_count: Int? = nil,
                 prev_score: Int? = nil, prev_played: Bool? = nil, prev_elapsed_ms: Int? = nil,
-                prev_solved_count: Int? = nil, prev_played_count: Int? = nil) {
+                prev_solved_count: Int? = nil, prev_played_count: Int? = nil,
+                streak: Int? = nil, avatar_version: Int? = nil) {
+        self.streak = streak
+        self.avatar_version = avatar_version
         self.user_id = user_id
         self.display_name = display_name
         self.score = score
@@ -134,6 +140,9 @@ public struct Profile: Codable, Sendable, Equatable {
     public var push_daily_at: String   // "HH:MM:SS" as PostgREST renders `time`
     public var push_streak: Bool
     public var push_passed: Bool
+    /// Migration 0009: 0 = no picture; bumped on every upload so image caches refresh.
+    /// Optional so profiles fetched before the column existed still decode.
+    public var avatar_version: Int?
 }
 
 /// One row of `list_items` for a puzzle the caller has already played: the value the

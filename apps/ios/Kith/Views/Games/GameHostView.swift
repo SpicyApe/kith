@@ -2,9 +2,10 @@
 // "Screens", docs/08-visual-design.md §"Game host chrome").
 //
 // The navigation bar carries the game name and the running timer, plus a help button that
-// presents a short rules sheet. Below the board, Reset / Give up sit in a bordered row;
-// Done appears alongside them once the engine reports the grid complete. Submission and
-// all state live in `AppModel`.
+// presents a short rules sheet. Below the board, Reset / Give up sit in a bordered row.
+// There is no Done button: Stars, Duo and Trail auto-submit the moment their engine reports
+// the grid complete (docs/08-visual-design.md §"Auto-complete"); Quint already submits on
+// its solving guess. Submission and all state live in `AppModel`.
 
 import Foundation
 import GridGames
@@ -17,12 +18,19 @@ struct GameHostView: View {
 
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var showGiveUpConfirm = false
     @State private var showRules = false
     /// Set once the results cover has been shown, so dismissing it pops back to the hub
     /// rather than leaving a finished grid on screen.
     @State private var sawResults = false
+    /// Guards the auto-complete `finishGame()` call (docs/08-visual-design.md
+    /// §"Auto-complete") against firing twice for the same game — `onChange` fires again on
+    /// every further engine mutation once `isComplete` is already true (Stars/Duo can still
+    /// take paint moves after completion), so a simple "did we already start it" flag, keyed
+    /// to this screen's own `kind`, is enough; a fresh `GameHostView` gets a fresh flag.
+    @State private var autoFinishStarted = false
 
     /// Reads `activeGames[kind]` directly rather than `model.activeGame`, so this screen
     /// always shows its own kind's session even if another grid game is also in progress
@@ -82,6 +90,31 @@ struct GameHostView: View {
         // A method rather than a body inside `.task`: that closure is `@Sendable` and does
         // not inherit this view's `@MainActor` isolation, so the hop is the `await` on this.
         .task { await start() }
+        // Auto-complete (docs/08-visual-design.md §"Auto-complete"): Stars, Duo and Trail
+        // finish the moment their engine reports `isComplete`, no Done tap needed. Quint is
+        // excluded — it already calls `finishGame()` itself the instant the solving guess is
+        // accepted (`AppModel.quintSubmit()`), with no delay, so gating on `kind` here rather
+        // than re-deriving "is this Quint" from the engine keeps the two paths from racing.
+        .onChange(of: game?.engine.isComplete) { _, complete in
+            guard kind != .quint else { return }
+            guard complete == true else {
+                // A Reset during the 0.6 s auto-finish window (below) flips `isComplete`
+                // back to false before `finishGame()` runs — clear the latch so a fresh
+                // completion of the *new* grid can still auto-finish (finding C4). Reset
+                // is itself disabled while a finish is pending (`resetButton` below), but
+                // this also covers `isComplete` going false for any other reason.
+                autoFinishStarted = false
+                return
+            }
+            guard !autoFinishStarted else { return }
+            autoFinishStarted = true
+            Task {
+                if !reduceMotion {
+                    try? await Task.sleep(nanoseconds: 600_000_000)
+                }
+                await model.finishGame()
+            }
+        }
         .sheet(isPresented: $showRules) {
             GameRulesSheet(kind: kind)
         }
@@ -180,7 +213,7 @@ struct GameHostView: View {
         }
     }
 
-    /// Below the board: the mistake count (if any), then the Reset / Give up / Done row
+    /// Below the board: the mistake count (if any), then the Reset / Give up row
     /// (docs/08-visual-design.md §"Game host chrome").
     private func controls(for game: ActiveGame) -> some View {
         VStack(spacing: 10) {
@@ -198,9 +231,6 @@ struct GameHostView: View {
                     resetButton
                 }
                 giveUpButton
-                if game.engine.isComplete, game.finished == nil {
-                    doneButton
-                }
             }
         }
         .frame(maxWidth: .infinity)
@@ -270,21 +300,6 @@ struct GameHostView: View {
 
     // MARK: Bottom row
 
-    private var doneButton: some View {
-        Button {
-            Task { await model.finishGame() }
-        } label: {
-            Text("Done")
-                .font(.headline)
-                .foregroundStyle(Color.white)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .background(Theme.color(for: kind), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        }
-        .disabled(game?.isFinishing == true)
-        .accessibilityLabel("Done, submit this grid")
-        .accessibilityIdentifier("game.done")
-    }
-
     private var resetButton: some View {
         Button {
             model.resetGame()
@@ -295,7 +310,9 @@ struct GameHostView: View {
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(Theme.paperMuted, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
-        .disabled(game == nil || game?.finished != nil)
+        // Also disabled while an auto-finish is pending (finding C4): resetting mid-window
+        // would otherwise race `finishGame()`, which is about to read the now-reset grid.
+        .disabled(game == nil || game?.finished != nil || autoFinishStarted)
         .accessibilityLabel("Reset the grid")
         .accessibilityIdentifier("game.reset")
     }
@@ -502,12 +519,18 @@ private struct RulesExampleGrid: View {
             .frame(width: metrics.cell * 0.78, height: metrics.cell * 0.78)
     }
 
+    /// Same disc style as the real Trail grid (docs/08-visual-design.md §"Trail discs
+    /// (contrast fix)"): `paper` fill, 2.5 pt `ink` ring, `ink` numeral at 46% of the cell.
     private func waypoint(_ text: String, metrics: GridMetrics) -> some View {
         Text(text)
-            .font(.system(size: max(9, metrics.cell * 0.4), weight: .bold, design: .rounded))
+            .font(.system(size: max(10, metrics.cell * 0.46), weight: .black, design: .rounded))
             .monospacedDigit()
-            .foregroundStyle(Color.white)
+            .foregroundStyle(Theme.ink)
             .frame(width: metrics.cell * 0.66, height: metrics.cell * 0.66)
-            .background(SwiftUI.Circle().fill(Theme.ink))
+            .background(
+                SwiftUI.Circle()
+                    .fill(Theme.paper)
+                    .overlay(SwiftUI.Circle().strokeBorder(Theme.ink, lineWidth: 2.5))
+            )
     }
 }

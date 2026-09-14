@@ -23,6 +23,13 @@ enum AppTab: String, Hashable, Sendable, CaseIterable {
     case today, board, circles, you
 }
 
+/// The board's Today / Yesterday toggle (docs/07 "Boards (revised 2026-09-13)", "Added
+/// later the same day"). `BoardView` keys its cache and its `refreshBoard` calls off
+/// whichever date this selects.
+enum BoardDay: String, Hashable, Sendable, CaseIterable {
+    case today, yesterday
+}
+
 /// Stage of the app shell.
 enum AppStage: Equatable, Sendable {
     case launching
@@ -126,6 +133,9 @@ final class AppModel {
     var myUserId: String = ""
     var tz: String = TimeZone.current.identifier
     var today: String = ""
+    /// Yesterday's ISO date in the same zone `today` uses (docs/07's board "Today /
+    /// Yesterday" toggle).
+    var yesterday: String { LocalDay.shift(today, by: -1) }
 
     // Puzzle
     var puzzle: Puzzle?
@@ -1178,9 +1188,12 @@ final class AppModel {
 
     // MARK: - Board
 
+    /// `date` defaults to `today`, matching `refreshBoard`'s own default, so a caller
+    /// reading the Yesterday toggle's cached rows can pass `model.yesterday` here instead
+    /// of only ever reading today's cache key (finding C8's symmetry fix).
     func rows(kind: BoardKind, scopeId: String?, period: BoardPeriod,
-              game: BoardGame = .lineup) -> [BoardDisplayRow] {
-        let key = BoardCacheKey(kind: kind, scopeId: scopeId, period: period, date: today, game: game)
+              game: BoardGame = .lineup, date: String? = nil) -> [BoardDisplayRow] {
+        let key = BoardCacheKey(kind: kind, scopeId: scopeId, period: period, date: date ?? today, game: game)
         let raw = boards[key] ?? []
         // Contact names are only used where the viewer actually knows the person.
         let overrides: [String: String] = kind == .everyone ? [:] : friendNames
@@ -1202,10 +1215,14 @@ final class AppModel {
         reactions = (try? await api.reactions(date: today)) ?? reactions
     }
 
+    /// `date` defaults to `today`; the board's Today/Yesterday toggle (docs/07 "Boards
+    /// (revised 2026-09-13)", "Added later the same day") passes `model.yesterday` to
+    /// load `board(..., for_date = today − 1)` instead.
     func refreshBoard(kind: BoardKind, scopeId: String?, period: BoardPeriod,
-                      game: BoardGame = .lineup, force: Bool = false,
+                      date: String? = nil, game: BoardGame = .lineup, force: Bool = false,
                       includeSocial: Bool = true) async {
-        let key = BoardCacheKey(kind: kind, scopeId: scopeId, period: period, date: today, game: game)
+        let day = date ?? today
+        let key = BoardCacheKey(kind: kind, scopeId: scopeId, period: period, date: day, game: game)
         // A board that failed last time is never served from the cache: retry it.
         if !force, boards[key] != nil, !failedBoards.contains(key) { return }
         // A second caller for the same key while one is already in flight (e.g. `reload`
@@ -1216,7 +1233,7 @@ final class AppModel {
         defer { loadingBoards.remove(key) }
         do {
             let rows = try await api.board(kind: kind, scopeId: scopeId, period: period,
-                                           date: today, game: game)
+                                           date: day, game: game)
             boards[key] = rows
             failedBoards.remove(key)
         } catch {
@@ -1379,10 +1396,18 @@ final class AppModel {
     /// Yesterday's caption text: "yesterday 1:12" or "yesterday —". Yesterday never shows
     /// "gave up" / "failed" wording (docs/07) — only a solved time or a dash.
     static func yesterdayLabel(for row: BoardRow) -> String {
+        secondaryLabel(for: row, prefix: "yesterday")
+    }
+
+    /// Same as `yesterdayLabel`, with a caller-chosen prefix. When the board's Today/
+    /// Yesterday toggle (docs/07 "Added later the same day") is on Yesterday, the row's
+    /// `prev_*` fields describe the day *before* yesterday, so `BoardView` passes "day
+    /// before" instead of "yesterday" here.
+    static func secondaryLabel(for row: BoardRow, prefix: String) -> String {
         if (row.prev_solved_count ?? 0) > 0, let elapsed = row.prev_elapsed_ms {
-            return "yesterday \(clock(elapsed))"
+            return "\(prefix) \(clock(elapsed))"
         }
-        return "yesterday —"
+        return "\(prefix) —"
     }
 
     func react(to userId: String, emoji: String) async {
@@ -1726,13 +1751,59 @@ final class AppModel {
         if let loaded = try? await api.profile() { profile = loaded }
     }
 
-    func updateProfile(_ patch: ProfilePatch) async {
+    /// Returns whether the save succeeded, so `EditProfileView` only dismisses on success
+    /// (finding C6). A failed re-fetch after a successful `updateProfile` used to blank
+    /// `profile` outright (finding B4) — now it falls back to applying the patch's own
+    /// non-nil fields locally, so the UI still reflects the change even if the follow-up
+    /// `profile()` call fails (e.g. offline right after the write went through).
+    @discardableResult
+    func updateProfile(_ patch: ProfilePatch) async -> Bool {
         do {
             try await api.updateProfile(patch)
-            profile = try? await api.profile()
+            if let fresh = try? await api.profile() {
+                profile = fresh
+            } else {
+                apply(patch)
+            }
+            return true
+        } catch {
+            show(toast: message(for: error), isError: true)
+            return false
+        }
+    }
+
+    /// Applies `patch`'s non-nil fields onto the in-memory `profile` (finding B4's local
+    /// fallback). Only touches fields `ProfilePatch` actually carries.
+    private func apply(_ patch: ProfilePatch) {
+        guard var current = profile else { return }
+        if let name = patch.display_name { current.display_name = name }
+        if let discoverable = patch.discoverable { current.discoverable = discoverable }
+        if let pushStreak = patch.push_streak { current.push_streak = pushStreak }
+        if let avatarVersion = patch.avatar_version { current.avatar_version = avatarVersion }
+        profile = current
+    }
+
+    /// Migration 0009 / docs/07 "Profile (2026-09-13)": `EditProfileView` hands this an
+    /// already centre-cropped, resized, JPEG-encoded photo. Uploads it, stores the bumped
+    /// version into `profile`, and toasts either way.
+    func uploadAvatar(jpeg: Data) async {
+        do {
+            let version = try await api.uploadAvatar(jpeg: jpeg, currentVersion: profile?.avatar_version ?? 0)
+            profile?.avatar_version = version
+            show(toast: "Photo updated.", isError: false)
         } catch {
             show(toast: message(for: error), isError: true)
         }
+    }
+
+    /// The public URL for a user's picture, or nil for the initials fallback. Nil when
+    /// there is no version yet (0 / nil) or when `api` is not the real Supabase client —
+    /// `SupabaseKithAPI.avatarURL` is a method on the concrete client, not on `KithAPI`,
+    /// and the fakes have nothing to serve, so a UI/unit test never reaches the network.
+    func avatarURL(userId: String, version: Int?) -> URL? {
+        guard let version, version > 0 else { return nil }
+        guard let supabase = api as? SupabaseKithAPI else { return nil }
+        return supabase.avatarURL(userId: userId, version: version)
     }
 
     func signOut() async {

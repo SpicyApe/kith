@@ -60,33 +60,34 @@ struct TrailView: View {
     }
 
     private func cellsBackground(_ metrics: GridMetrics) -> some View {
-        VStack(spacing: 0) {
+        // `engine.visited` builds a `Set<GridPoint>` from the path on every access
+        // (finding C5) — read it once per render instead of once per cell (up to 81 times
+        // on a 9×9 board).
+        let visited = engine.visited
+        return VStack(spacing: 0) {
             ForEach(0..<engine.spec.n, id: \.self) { row in
                 HStack(spacing: 0) {
                     ForEach(0..<engine.spec.n, id: \.self) { column in
-                        cell(GridPoint(row: row, col: column), metrics: metrics)
+                        cell(GridPoint(row: row, col: column), metrics: metrics, visited: visited)
                     }
                 }
             }
         }
     }
 
-    private func cell(_ point: GridPoint, metrics: GridMetrics) -> some View {
+    private func cell(_ point: GridPoint, metrics: GridMetrics, visited: Set<GridPoint>) -> some View {
         let waypoint = engine.waypointNumber(at: point)
-        let onPath = engine.visited.contains(point)
-        let isNext = waypoint != nil && waypoint == engine.nextWaypoint
+        let onPath = visited.contains(point)
 
+        // The next waypoint's ring lives on the disc itself now (`waypointOverlay`, drawn
+        // above this wash so it reads regardless of what's underneath) — docs/08-visual-design.md
+        // §"Trail discs (contrast fix)". This layer only paints the paper base and the
+        // visited wash.
         return ZStack {
             Theme.paper
 
             if onPath {
                 Theme.trail.opacity(0.14)
-            }
-
-            if isNext {
-                SwiftUI.Circle()
-                    .strokeBorder(Theme.trail, lineWidth: 2.5)
-                    .frame(width: metrics.cell * 0.76, height: metrics.cell * 0.76)
             }
         }
         .frame(width: metrics.cell, height: metrics.cell)
@@ -97,21 +98,36 @@ struct TrailView: View {
         .accessibilityIdentifier("trail.cell.\(point.row).\(point.col)")
     }
 
-    /// The waypoint discs and their numbers, drawn above the path (finding B4) — previously
-    /// part of `cell(_:metrics:)`, they sat under `pathShape` in the old single `ZStack` and
-    /// so could be covered by the drawn line.
+    /// The waypoint discs and their numbers, drawn above the path and the visited wash
+    /// (finding B4) — previously part of `cell(_:metrics:)`, they sat under `pathShape` in
+    /// the old single `ZStack` and so could be covered by the drawn line.
+    ///
+    /// docs/08-visual-design.md §"Trail discs (contrast fix)": the disc was `ink` fill with
+    /// `paper` numerals, which read poorly under the translucent path/wash. Now the disc is
+    /// `paper` fill with a 2.5 pt `ink` ring and an `ink` numeral at 46% of the cell, so the
+    /// number stays dark-on-white (light) / light-on-dark (dark) regardless of what's drawn
+    /// underneath. The next required waypoint's ring is `trail` instead of `ink`.
     private func waypointOverlay(_ metrics: GridMetrics) -> some View {
         ZStack {
             ForEach(0..<engine.spec.n, id: \.self) { row in
                 ForEach(0..<engine.spec.n, id: \.self) { column in
                     let point = GridPoint(row: row, col: column)
                     if let waypoint = engine.waypointNumber(at: point) {
+                        let isNext = waypoint == engine.nextWaypoint
+                        let discSize = metrics.cell * 0.66
                         Text("\(waypoint)")
-                            .font(.system(size: max(10, metrics.cell * 0.4), weight: .bold, design: .rounded))
+                            .font(.system(size: max(10, metrics.cell * 0.46), weight: .black, design: .rounded))
                             .monospacedDigit()
-                            .foregroundStyle(Color.white)
-                            .frame(width: metrics.cell * 0.66, height: metrics.cell * 0.66)
-                            .background(SwiftUI.Circle().fill(Theme.ink))
+                            .foregroundStyle(Theme.ink)
+                            .frame(width: discSize, height: discSize)
+                            .background(
+                                SwiftUI.Circle()
+                                    .fill(Theme.paper)
+                                    .overlay(
+                                        SwiftUI.Circle()
+                                            .strokeBorder(isNext ? Theme.trail : Theme.ink, lineWidth: 2.5)
+                                    )
+                            )
                             .position(metrics.centre(of: point))
                     }
                 }

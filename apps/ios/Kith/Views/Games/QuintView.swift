@@ -13,6 +13,14 @@ import SwiftUI
 @MainActor
 struct QuintView: View {
     let engine: QuintEngine
+    /// Edge length of one tile. Defaults to the normal in-game size; `GameResultsView`
+    /// passes 32 to fit the results card's ~200 pt board preview (docs/08-visual-design.md
+    /// §"Results (grid games) — v2").
+    var tileSize: CGFloat = 62
+    /// Whether to render the reveal caption and the on-screen keyboard below the grid.
+    /// `GameResultsView` passes `false` — its board preview shows only the finished tiles,
+    /// read-only, with no keyboard beneath them.
+    var showsKeyboard: Bool = true
 
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -28,12 +36,20 @@ struct QuintView: View {
     private var shakeCounter: Int { model.activeGames[.quint]?.quintShake ?? 0 }
     private var currentRow: Int { engine.guesses.count }
 
+    init(engine: QuintEngine, tileSize: CGFloat = 62, showsKeyboard: Bool = true) {
+        self.engine = engine
+        self.tileSize = tileSize
+        self.showsKeyboard = showsKeyboard
+    }
+
     var body: some View {
         VStack(spacing: 20) {
             board
-            revealCaption
-            keyboard
-            Spacer(minLength: 0)
+            if showsKeyboard {
+                revealCaption
+                keyboard
+                Spacer(minLength: 0)
+            }
         }
         .onChange(of: engine.guesses.count) { old, new in
             guard new > old else { return }
@@ -92,11 +108,11 @@ struct QuintView: View {
             )
             .overlay(
                 Text(letter.map { String($0).uppercased() } ?? "")
-                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .font(.system(size: max(9, tileSize * 0.42), weight: .black, design: .rounded))
                     .foregroundStyle(textColor(for: mark))
             )
             .aspectRatio(1, contentMode: .fit)
-            .frame(maxWidth: 62, maxHeight: 62)
+            .frame(maxWidth: tileSize, maxHeight: tileSize)
             .rotation3DEffect(.degrees(angle(row: row, column: column)),
                               axis: (x: 1, y: 0, z: 0))
             .accessibilityElement(children: .ignore)

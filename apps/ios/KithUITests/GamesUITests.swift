@@ -34,7 +34,7 @@ import XCTest
     // MARK: - 2. Solving the fake Stars puzzle
 
     func testSolveFakeStars() {
-        let app = launch(state: "returning")
+        launch(state: "returning")
 
         openHubRow("stars")
         awaitElement(element("game.timer"), "game.timer never appeared on the Stars screen",
@@ -44,8 +44,10 @@ import XCTest
             tapCell("stars.cell.\(row).\(column)", times: 2)
         }
 
-        // "Done" only exists once the engine reports the grid complete.
-        awaitAndTap(app.buttons["game.done"], "game.done never appeared after placing five stars")
+        // No Done tap needed any more (docs/08-visual-design.md §"Auto-complete"): the grid
+        // auto-submits the moment the engine reports it complete.
+        awaitElement(element("gameResults.headline"), "gameResults.headline never appeared after placing five stars",
+                     timeout: KithUITestCase.launchTimeout)
 
         assertLabelEquals(element("gameResults.headline"), "Solved!")
         awaitElement(element("gameResults.score"), "gameResults.score never appeared")
@@ -56,7 +58,7 @@ import XCTest
     // MARK: - 2b. Solving the fake Trail puzzle
 
     func testSolveFakeTrail() {
-        let app = launch(state: "returning")
+        launch(state: "returning")
 
         openHubRow("trail")
         awaitElement(element("trail.cell.0.0"), "The Trail grid never appeared",
@@ -68,9 +70,10 @@ import XCTest
             tapCell("trail.cell.\(row).\(column)")
         }
 
-        awaitAndTap(app.buttons["game.done"], "game.done never appeared after completing the trail")
-
-        awaitElement(element("gameResults.headline"), "gameResults.headline never appeared")
+        // No Done tap needed any more (docs/08-visual-design.md §"Auto-complete"): the trail
+        // auto-submits the moment the engine reports it complete.
+        awaitElement(element("gameResults.headline"), "gameResults.headline never appeared",
+                     timeout: KithUITestCase.launchTimeout)
     }
 
     // MARK: - 2c. Solving the fake Quint puzzle
@@ -120,7 +123,11 @@ import XCTest
         }
 
         assertLabelEquals(element("gameResults.headline"), "Gave up")
-        assertLabelContains(element("gameResults.score"), "100")
+        // `gameResults.score` now carries the results card's streak stat tile, not the raw
+        // give-up score (docs/08-visual-design.md §"Results (grid games) — v2"); the fake's
+        // streak starts at 12 but a grid-game submission — including a give-up — bumps it
+        // by one first (TESTING.md §2), so it reads 13 here.
+        assertLabelContains(element("gameResults.score"), "13")
     }
 
     // MARK: - 4. Expanding a board section

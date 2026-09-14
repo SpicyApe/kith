@@ -38,7 +38,7 @@ plus `board(..., game:)`.
 | Screen | Identifiers |
 |---|---|
 | Hub | `hub.row.lineup`, `hub.row.stars`, `hub.row.duo`, `hub.row.trail`, `hub.streak`, `hub.countdown` |
-| Game host | `game.timer`, `game.giveUp`, `game.giveUp.confirm`, `game.reset`, `game.done` |
+| Game host | `game.timer`, `game.giveUp`, `game.giveUp.confirm`, `game.reset` (no Done: grids auto-submit when complete) |
 | Grids | `stars.cell.<r>.<c>`, `duo.cell.<r>.<c>`, `trail.cell.<r>.<c>` (accessibility label "row r column c, <state>") |
 | Game results | `gameResults.headline`, `gameResults.time`, `gameResults.score`, `gameResults.share` |
 | Board | `board.game` (Picker or Menu) |
@@ -53,7 +53,7 @@ with a forced snake) so UI tests can solve them by tapping cells in a known orde
   submits `gaveUp:true`; mistakes increment on a new conflict; offline queue replay for games;
   board cache keyed by game.
 - `KithUITests` (hermetic): `testHubListsFourGames`, `testSolveFakeStars` (tap the five
-  star cells → `game.done` → `gameResults.headline` "Solved"), `testGiveUpDuo`,
+  star cells → auto-submit → `gameResults.headline` "Solved!"), `testGiveUpDuo`,
   `testBoardQuintSectionExpands` (expand Quint, Dev's "failed" row appears).
 - `KithLiveTests`: after Lineup, open Stars from the hub, tap "Give up" (solving a real
   8×8 blind is not feasible in a test), confirm, assert `gameResults.headline` "Gave up",

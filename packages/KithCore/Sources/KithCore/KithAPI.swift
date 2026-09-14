@@ -40,6 +40,10 @@ public protocol KithAPI: Sendable {
     // Tables
     func profile() async throws -> Profile
     func updateProfile(_ patch: ProfilePatch) async throws
+    /// Migration 0009: uploads a JPEG (≤ 1 MB, already resized by the caller) to the public
+    /// `avatars` bucket at `<my id>.jpg`, then bumps `users.avatar_version` to `current + 1`
+    /// and returns the new version. `avatarURL(userId:version:)` builds the display URL.
+    func uploadAvatar(jpeg: Data, currentVersion: Int) async throws -> Int
     func myCircles() async throws -> [Circle]
     func createCircle(name: String) async throws -> Circle
     func leaveCircle(id: String) async throws
@@ -71,12 +75,14 @@ public struct ProfilePatch: Codable, Sendable, Equatable {
     public var push_daily_at: String?
     public var push_streak: Bool?
     public var push_passed: Bool?
+    /// Migration 0009; set by `uploadAvatar`, never by hand.
+    public var avatar_version: Int?
     public init(display_name: String? = nil, tz: String? = nil, discoverable: Bool? = nil,
                 last_open_at: String? = nil, push_daily: Bool? = nil, push_daily_at: String? = nil,
-                push_streak: Bool? = nil, push_passed: Bool? = nil) {
+                push_streak: Bool? = nil, push_passed: Bool? = nil, avatar_version: Int? = nil) {
         self.display_name = display_name; self.tz = tz; self.discoverable = discoverable
         self.last_open_at = last_open_at; self.push_daily = push_daily; self.push_daily_at = push_daily_at
-        self.push_streak = push_streak; self.push_passed = push_passed
+        self.push_streak = push_streak; self.push_passed = push_passed; self.avatar_version = avatar_version
     }
 }
 
@@ -307,7 +313,7 @@ public final class SupabaseKithAPI: KithAPI {
 
     /// The client-readable columns of the caller's `users` row, in `Profile`'s field order.
     private static let profileSelect =
-        "id,display_name,tz,discoverable,invite_code,push_daily,push_daily_at,push_streak,push_passed"
+        "id,display_name,tz,discoverable,invite_code,push_daily,push_daily_at,push_streak,push_passed,avatar_version"
 
     public func updateProfile(_ patch: ProfilePatch) async throws {
         let token = try await requireToken()
@@ -319,6 +325,34 @@ public final class SupabaseKithAPI: KithAPI {
             body: JSONEncoder().encode(patch)
         )
         try await sendEmpty(request)
+    }
+
+    public func uploadAvatar(jpeg: Data, currentVersion: Int) async throws -> Int {
+        let token = try await requireToken()
+        let me = try meId(from: token)
+        // Storage REST: POST creates, and `x-upsert: true` lets the same path be replaced.
+        let upload = HTTPRequest(
+            method: .post,
+            url: url(path: "storage/v1/object/avatars/\(me).jpg"),
+            headers: baseHeaders(token: token, extra: [
+                "Content-Type": "image/jpeg",
+                "x-upsert": "true",
+                "Cache-Control": "max-age=3600",
+            ]),
+            body: jpeg
+        )
+        try await sendEmpty(upload)
+        let version = currentVersion + 1
+        try await updateProfile(ProfilePatch(avatar_version: version))
+        return version
+    }
+
+    /// Public URL of a user's picture, or nil when they have none (`version` 0 / nil). The
+    /// version rides along as a query item purely to defeat image caches after an upload.
+    public func avatarURL(userId: String, version: Int?) -> URL? {
+        guard let version, version > 0 else { return nil }
+        return url(path: "storage/v1/object/public/avatars/\(userId).jpg",
+                   queryItems: [URLQueryItem(name: "v", value: String(version))])
     }
 
     public func myCircles() async throws -> [Circle] {

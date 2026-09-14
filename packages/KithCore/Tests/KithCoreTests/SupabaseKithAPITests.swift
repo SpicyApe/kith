@@ -348,7 +348,7 @@ final class SupabaseKithAPITests: XCTestCase {
         XCTAssertEqual(
             req.url.absoluteString,
             "https://example.supabase.co/rest/v1/users?"
-                + "select=id,display_name,tz,discoverable,invite_code,push_daily,push_daily_at,push_streak,push_passed"
+                + "select=id,display_name,tz,discoverable,invite_code,push_daily,push_daily_at,push_streak,push_passed,avatar_version"
                 + "&id=eq.user-42"
         )
         XCTAssertEqual(req.headers["Accept"], "application/vnd.pgrst.object+json")
@@ -376,7 +376,7 @@ final class SupabaseKithAPITests: XCTestCase {
         // The select must be on the request even on the failure path.
         XCTAssertTrue(
             http.requests.first?.url.absoluteString.contains(
-                "select=id,display_name,tz,discoverable,invite_code,push_daily,push_daily_at,push_streak,push_passed"
+                "select=id,display_name,tz,discoverable,invite_code,push_daily,push_daily_at,push_streak,push_passed,avatar_version"
             ) == true,
             "URL was \(String(describing: http.requests.first?.url))"
         )

@@ -28,6 +28,7 @@ await db.exec(fs.readFileSync(new URL("../migrations/0004_revoke_wrappers_from_a
 await db.exec(fs.readFileSync(new URL("../migrations/0006_games.sql", import.meta.url), "utf8"));
 await db.exec(fs.readFileSync(new URL("../migrations/0007_quint.sql", import.meta.url), "utf8"));
 await db.exec(fs.readFileSync(new URL("../migrations/0008_board_prev_score.sql", import.meta.url), "utf8"));
+await db.exec(fs.readFileSync(new URL("../migrations/0009_avatars_streak.sql", import.meta.url), "utf8"));
 console.log("migration: OK (0001 + 0004 + 0006 + 0007)");
 
 const A = "11111111-1111-1111-1111-111111111111";
@@ -85,6 +86,16 @@ if (alex.rank !== 1 || alex.prev_rank !== 2) throw new Error(`Alex rank/prev_ran
   }
   console.log("board prev_* columns ok");
 }
+// 0009: every board row carries the member's streak and avatar_version; a user may bump
+// their own avatar_version but not anyone else's.
+{
+  const rows = await db.query(`select display_name, streak, avatar_version from public.board('friends', null, 'today', '${today}')`);
+  const a = rows.rows.find((r) => r.display_name === "Alex");
+  if (!a || typeof a.streak !== "number" || a.streak < 1 || a.avatar_version !== 0) {
+    throw new Error(`board streak/avatar_version wrong: ${JSON.stringify(a)}`);
+  }
+  console.log("board streak + avatar_version ok");
+}
 
 const week = await db.query(`select display_name, score, rank from public.board('friends', null, 'week', '${today}')`);
 console.table(week.rows);
@@ -131,11 +142,21 @@ await db.exec(`
                 push_daily, push_daily_at, push_streak, push_passed)
     on public.users to app;
   grant update (display_name, tz, discoverable, last_open_at,
-                push_daily, push_daily_at, push_streak, push_passed)
+                push_daily, push_daily_at, push_streak, push_passed, avatar_version)
     on public.users to app;
+  grant select (avatar_version) on public.users to app;
   set role app;
   set app.uid = '${B}';
 `);
+// 0009: a user may bump their own avatar_version but nobody else's (RLS + column grant).
+{
+  await db.exec(`update public.users set avatar_version = 3 where id = '${B}'`);
+  const mine = await db.query(`select avatar_version from public.users where id = '${B}'`);
+  if (mine.rows[0].avatar_version !== 3) throw new Error("could not bump own avatar_version");
+  const others = await db.query(`update public.users set avatar_version = 9 where id = '${A}' returning id`);
+  if (others.rows.length !== 0) throw new Error("avatar_version updatable on other users");
+  console.log("avatar_version own-row update ok");
+}
 const seen = await db.query(`select user_id from public.results where puzzle_date = '${today}'`);
 const seenIds = seen.rows.map((r) => r.user_id).sort();
 console.log("B sees results of:", seenIds);

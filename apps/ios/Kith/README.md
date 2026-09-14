@@ -24,7 +24,7 @@ and the handful of API calls most likely to need a one-line fix.
 | `KithApp.swift` | `@main`. Owns `AppModel`, injects it with `.environment`, `onOpenURL` → `model.route(url)`, scene-phase → `model.onForeground()`, attaches `AppDelegate`. |
 | `Config/AppConfig.swift` | Reads `Config.plist`; `print`s and exposes `isConfigured` when a key is missing. Also `pushEnvironment` (sandbox/production) and `appVersion`. |
 | `Config/Config.example.plist` | Template. |
-| `Model/AppModel.swift` | `@MainActor @Observable`. All state and all network calls. Also holds the small presentation helpers (`headerDate`, `clock`, `countdownText`) so views stay dumb. |
+| `Model/AppModel.swift` | `@MainActor @Observable`. All state and all network calls. Also holds the small presentation helpers (`headerDate`, `clock`, `countdownText`) so views stay dumb. `yesterday` (computed from `today`), `refreshBoard(date:)`, `avatarURL(userId:version:)` (nil for the fakes, or when the version is 0/nil) and `uploadAvatar(jpeg:)` are the docs/07 "Boards (revised 2026-09-13)"/"Profile (2026-09-13)" additions. |
 | `Model/AuthProviding.swift` | The auth seam `AppModel` depends on (refines `KithCore.AuthTokenProvider`). `AuthSession` and `FakeAuth` conform. |
 | `Model/Session.swift` | `AuthSession`: supabase-swift OTP sign-in + `AuthProviding`. |
 | `Testing/FakeKithAPI.swift` | `#if DEBUG`. In-memory `KithAPI` with recorded `calls`, three starting states, and `LineupEngine`-recomputed submissions. |
@@ -34,15 +34,17 @@ and the handful of API calls most likely to need a one-line fix.
 | `Services/ContactsService.swift` | `CNContactStore` reads + the whole sync (`ContactDirectory` → `ContactSyncPlanner` → `api.matchContacts`). |
 | `Services/PushService.swift` | Permission, APNs token, deep links. Contains `AppDelegate`. |
 | `Services/MidnightTimer.swift` | Sleeps until local midnight, then flips Today. |
+| `Services/ImageResizer.swift` | `ImageResizer.squareJPEG(from:side:quality:)`: centre-crop to a square, resize (256 px default), JPEG-encode (0.8 default) — what `EditProfileView`'s photo picker hands to `AppModel.uploadAvatar`. |
 | `Views/RootView.swift` | Launch / onboarding / `TabView`, plus the toast overlay and the onboarding-tail cover. |
 | `Views/Onboarding/*.swift` | `OnboardingView` (shell + progress bar), `PhoneStep`, `CodeStep`, `NameStep`, `ContactsPromptStep`, `FriendsFoundStep`, `NotificationsPromptStep`. |
 | `Views/Today/TodayView.swift` | Puzzle, played state, timer, "Lock in", results cover. |
 | `Views/Today/TileList.swift` | The five tiles (`List` + `.onMove`, locked rows `.moveDisabled`), plus `Haptics`. |
 | `Views/Results/ResultsView.swift` | Headline, score, grid, reveal strip, streak, rank teaser, taunt, `ShareLink`, Copy. |
-| `Views/Board/BoardView.swift` | Friends/Circles segmented control, one expandable `DisclosureGroup` section per game (`board.section.<slug>`) plus "All games", rows ranked client-side by `AppModel.rankRows`/`rankYesterday` (docs/07 "Boards (revised 2026-09-13)"), reaction sheet, empty state. `BoardRowView` lives here. |
+| `Views/Board/BoardView.swift` | Friends/Circles segmented control, a Today/Yesterday segmented control (`board.day`, docs/07 "Added later the same day") that keys `boardKey`/`refreshBoard(date:)`, one expandable `DisclosureGroup` section per game (`board.section.<slug>`) plus "All games", rows ranked client-side by `AppModel.rankRows`/`rankYesterday` (docs/07 "Boards (revised 2026-09-13)"), reaction sheet, empty state. `BoardRowView` (streak pill, avatar) lives here. |
 | `Views/Circles/CirclesView.swift` | List, create sheet, join sheet, share, leave. |
-| `Views/Profile/ProfileView.swift` | Header, `HeatmapView`, `StatsGrid`, invite code, settings, delete account. |
-| `Views/Shared/*.swift` | `Theme` (accent colour, card, button styles), `AvatarView`, `MovementChip`, `MiniGrid` + `AttemptGrid`, `Toast`. |
+| `Views/Profile/ProfileView.swift` | Header (`profile.name`, `profile.edit` opens `EditProfileView`), `HeatmapView`, `StatsGrid`, invite code, settings, delete account. |
+| `Views/Profile/EditProfileView.swift` | Sheet: rename (`profile.edit.name`, 1–30 chars, `profile.edit.save` disabled otherwise) and "Change photo" (`profile.edit.photo`, `PhotosPicker` → `ImageResizer.squareJPEG` → `AppModel.uploadAvatar`) — docs/07 "Profile (2026-09-13)". |
+| `Views/Shared/*.swift` | `Theme` (accent colour, card, button styles), `AvatarView` (initials, or `AsyncImage` when `url:` is set), `MovementChip`, `MiniGrid` + `AttemptGrid`, `Toast`. |
 | `Resources/Assets.xcassets` | `AccentColor` (#E4593F light, #F0745C dark) and an empty 1024 `AppIcon` slot. |
 
 ## Testing
@@ -329,6 +331,24 @@ exercises this in `GamesTests`.
   (docs/07) replaced that list with one expandable section per game, where the approximation
   no longer has a single "the list" to pin against, so it was dropped rather than
   reimplemented per section.
+- **Board day toggle and profile picture (docs/07 "Boards (revised 2026-09-13)", "Added
+  later the same day", and "Profile (2026-09-13)").** `BoardView` gained a second segmented
+  control, `board.day` ("Today" / "Yesterday"), under `board.kind`; it drives a
+  `selectedDay: BoardDay` that both `boardKey(for:)` and every `refreshBoard` call read,
+  passing `model.today` or the new `AppModel.yesterday` (`LocalDay.shift(today, by: -1)`)
+  as `refreshBoard`'s new `date:` parameter (default `today`, so every pre-existing call
+  site is unchanged). On the Yesterday toggle, a row's secondary caption still reads from
+  the same `prev_*` fields, but the prefix changes from "yesterday" to **"day before"**
+  (`AppModel.secondaryLabel(for:prefix:)`; `yesterdayLabel(for:)` is now a thin wrapper
+  around it, unchanged for existing callers) — those fields describe the day before
+  *whichever* date is selected, not always "yesterday" in the literal sense. `AvatarView`
+  gained an optional `url:`; `AppModel.avatarURL(userId:version:)` casts `api` to
+  `SupabaseKithAPI` (the protocol has no such method — see KithCore's `KithAPI.swift`) and
+  returns nil for anything else, including both fakes, so no test ever touches the
+  network. `EditProfileView` (new file, presented as a sheet from `ProfileView`'s new
+  `profile.edit` pencil button) does the rename and the photo picker; `ImageResizer`
+  (new file, `Services/`) is the centre-crop/resize/JPEG-encode step between
+  `PhotosPickerItem`'s `Data` and `AppModel.uploadAvatar(jpeg:)`.
 
 ## Where I'd look first if it doesn't compile
 
@@ -375,3 +395,11 @@ Honest list, roughly in order of risk.
 10. **The reveal strip's `RevealLine` sits at file scope in `ResultsView.swift`**, not
    nested in the view, so it does not inherit `@MainActor` and can satisfy
    `Identifiable`'s nonisolated `id` requirement.
+11. **`PhotosPicker`/`PhotosPickerItem` in `EditProfileView.swift`.** `import PhotosUI`,
+    no Info.plist key needed (it's the `PHPickerViewController`-backed API, not the legacy
+    library-wide permission one), no `project.yml` change — the framework ships in the
+    SDK. `item.loadTransferable(type: Data.self)` is the call most likely to need a
+    signature tweak; everything downstream (`ImageResizer.squareJPEG`,
+    `AppModel.uploadAvatar`) only depends on the resulting `Data`. `onChange(of:
+    photoItem) { _, newItem in ... }` uses the two-parameter iOS 17 `onChange` overload —
+    if that's unavailable, drop to the older `{ newItem in ... }` single-parameter form.

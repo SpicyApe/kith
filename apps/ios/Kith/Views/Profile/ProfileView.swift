@@ -9,6 +9,7 @@ import UIKit
 @MainActor
 struct ProfileView: View {
     @Environment(AppModel.self) private var model
+    @State private var showEditProfile = false
 
     var body: some View {
         @Bindable var model = model
@@ -73,6 +74,9 @@ struct ProfileView: View {
             .navigationBarTitleDisplayMode(.large)
             .task { await model.loadProfileData() }
             .refreshable { await model.loadProfileData() }
+            .sheet(isPresented: $showEditProfile) {
+                EditProfileView(currentName: model.profile?.display_name ?? "")
+            }
             .confirmationDialog(
                 "Delete your account?",
                 isPresented: $model.showDeleteConfirm,
@@ -97,17 +101,32 @@ struct ProfileView: View {
 
     private var headerRow: some View {
         HStack(spacing: 14) {
-            AvatarView(name: model.profile?.display_name ?? "?", size: 56, highlighted: true)
+            AvatarView(
+                name: model.profile?.display_name ?? "?", size: 56, highlighted: true,
+                url: model.avatarURL(userId: model.myUserId, version: model.profile?.avatar_version)
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.profile?.display_name ?? "You")
                     .font(.title3.weight(.semibold))
+                    .accessibilityIdentifier("profile.name")
                 Text("Best: \(model.stats.longestStreak)")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
+
+            Button {
+                showEditProfile = true
+            } label: {
+                Image(systemName: "pencil.circle")
+                    .font(.title2)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Edit profile")
+            .accessibilityIdentifier("profile.edit")
 
             Text("🔥 \(model.streak)")
                 .font(.headline.monospacedDigit())

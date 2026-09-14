@@ -27,6 +27,18 @@ LinkedIn's names (Queens, Tango, Zip), icons, and copy are, so none of them appe
   ignored by the client. A row with a rank today but no rank yesterday (unplayed or not
   yet a friend) shows a **NEW** chip instead of a movement arrow. Tapping a row still
   opens the reaction sheet; an unplayed row (no rank) is not tappable.
+  *Added later the same day:* a **Today / Yesterday** toggle under the Friends / Circles
+  picker (default Today; identifier `board.day`). Yesterday calls `board(..., for_date =
+  today − 1)`, so each row then shows yesterday's time with the day before underneath and
+  the movement arrow compares those two days. Every row also shows the player's **streak**
+  (🔥 n from migration 0009's `streak` column) next to the time, and the player's picture
+  (`avatar_version` > 0 → the public `avatars/<id>.jpg?v=<n>` URL) instead of initials.
+- **Profile** (2026-09-13): people can change their display name (1–30 characters, the
+  `users.display_name` column via `updateProfile`) and set a profile picture: pick from the
+  photo library, the app centre-crops to a square, resizes to 256 px and encodes JPEG at
+  0.8, then `uploadAvatar` stores it in the public `avatars` bucket and bumps
+  `users.avatar_version`. Pictures show on the board, the profile header and the reaction
+  sheet; initials remain the fallback.
 - **Streak** counts a day when at least one game was played.
 - **Share** text per game, same shape as Lineup:
   ```

@@ -116,13 +116,46 @@ row: **Reset** (bordered, `paperMuted`) and **Give up** (bordered, `danger` text
 tall, 14-radius; Done appears in the accent when the board is complete. Board horizontal
 padding 16 (8 at n ≥ 9).
 
-## Results (grid games)
+## Results (grid games) — v2, 2026-09-13
 
-Headline in `.largeTitle` rounded bold ("Solved!", "Gave up"), a one-line subtitle
-("Stars #12 · 8×8"), then three stat columns, each a rounded-bold 34 pt number over a
-`.caption` label: Time, Score, Mistakes. Then the share preview (emoji rows in a `paperMuted`
-14-radius card, monospaced) and a full-width filled **Share** button in the game's colour.
-The rank teaser and "Done" stay as they are; identifiers unchanged.
+The first version (headline, subtitle, three numbers, share) read as a settings form. v2 is
+a celebration card:
+
+1. **Hero band**: full-width, 14-radius card filled with a vertical gradient from the game
+   colour to the same colour darkened 18 %, white text. Left: the game's SF Symbol at 28 pt
+   in a white 20 % circle. Headline "Solved!" / "Gave up" / "Failed" in 40 pt rounded
+   black; beneath it the subtitle "Stars #12 · 8×8 · Sunday" in white 80 %. Under a fail or
+   give-up for Quint: "The word was CRANE" in white.
+2. **Your board**: the finished grid, drawn read-only with the very same cell styles at
+   about 200 pt (the game's grid view with hit-testing off, fitted into a square; Quint shows
+   its six rows of tiles at 32 pt). This is the moment people screenshot, so it sits centred
+   with 16 pt of air, no chrome.
+3. **Stat tiles**: three `paperMuted` 14-radius tiles in a row, each a 30 pt rounded-bold
+   number over a `.caption` uppercase tracking-wide label: **Time**, **Streak** (🔥 n), and
+   **Mistakes** (Quint: **Guesses** as k/6). Points are not shown (docs/07 boards are
+   time-based now).
+4. **Buttons**: full-width filled **Share** in the game colour (with `square.and.arrow.up`),
+   then a bordered **Done**. The rank teaser, if any, sits between the tiles and the buttons
+   as one secondary line.
+
+Identifiers unchanged (`gameResults.headline`, `.time`, `.score` now carries the streak
+tile's number, `.share`, `.answer`). The solve haptic fires once when the screen appears.
+
+## Trail discs (contrast fix, 2026-09-13)
+
+Waypoint discs were `ink` with `paper` numerals under the translucent path and read poorly
+on the wash. Now: disc = `paper` fill, 2.5 pt `ink` ring, numeral in `ink` at 46 % of the
+cell, rounded black; the disc is drawn above the path and the visited wash, so the number is
+always dark-on-white (light mode) / light-on-dark (dark mode) regardless of the path colour.
+The next required waypoint's ring is `trail` instead of `ink`.
+
+## Auto-complete (2026-09-13)
+
+Stars, Duo and Trail finish the moment the engine reports `isComplete`: the board plays the
+success feedback, then submits after 0.6 s (0 s under Reduce Motion) and presents the results
+card. There is no Done button any more; `game.done` is gone from the toolbar and TESTING.md.
+Lineup keeps Lock in (an order has to be committed on purpose); Quint already submits on the
+solving guess.
 
 ## Lineup
 

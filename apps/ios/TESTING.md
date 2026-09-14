@@ -34,13 +34,19 @@ real views against an in-memory fake backend. No network, no Supabase project ne
 | Me | user id `u-me`, display name `Alex`, invite code `KITH7F3Q`, tz `UTC` |
 | Puzzle | date = today (UTC), number 142, prompt "Order these by the year they were invented", direction "Earliest at the top"; items (id, label, value, fact): 1 Bicycle 1817 "The first version had no pedals", 2 Telephone 1876 "Bell's patent came in March 1876", 3 Light bulb 1879 "Edison's carbon-filament lamp", 4 Zipper 1913 "Sundback's design is the one still used", 5 Microwave oven 1946 "Invented after a radar magnetron melted a chocolate bar"; `correctOrder` `[1,2,3,4,5]`; presentation order `[2,1,3,4,5]` (one swap from correct) |
 | Friends board (today) | Mum (`u-mum`) 948 solved 1 try, Sam (`u-sam`) 610 solved 2 tries with taunt "took me 40 seconds", Dev (`u-dev`) 160 solved 3 tries; ranks 1,2,3 with prev 3,1,nil; me: unplayed in `returning`, 520 rank 3 in `played` |
-| Board rows, all games (docs/07 "Boards (revised 2026-09-13)") | `board(game:)` now returns per-game data: on Lineup, Stars, Duo, Trail and Quint alike, Mum and Sam solve today (Mum faster on Lineup, Stars, Duo, Trail; both close on Quint) with `solved_count`/`played_count`/`prev_*` set from migration 0008; Dev gives up on Stars/Duo/Trail/Quint (`played_count` 1, `solved_count` 0 — the "gave up"/"failed" row) after solving those same games yesterday, but solves Lineup outright; Jo and I have never played any of them. Yesterday's numbers swap Mum and Sam's order on every game, so the client's rank-movement arrow has both directions to show. `total` is summed from the other five, not a separate fixture. |
+| Board rows, all games (docs/07 "Boards (revised 2026-09-13)") | `board(game:)` now returns per-game data: on Lineup, Stars, Duo, Trail and Quint alike, Mum and Sam solve today (Mum faster on Lineup, Stars, Duo, Trail; both close on Quint) with `solved_count`/`played_count`/`prev_*` set from migration 0008; Dev gives up on Stars/Duo/Trail/Quint (`played_count` 1, `solved_count` 0 — the "gave up"/"failed" row) after solving those same games yesterday, but solves Lineup outright; Jo and I have never played any of them. Yesterday's numbers swap Mum and Sam's order on every game, so the client's rank-movement arrow has both directions to show. `total` is summed from the other five, not a separate fixture. Every row also carries migration 0009's `streak` (Mum 30, Sam 5, Dev 2, Jo and me nil — hidden pill) and `avatar_version` (Mum 2, everyone else 0, i.e. initials); `AppModel.avatarURL` is nil for the fake regardless (see below), so a picture never actually loads in a test. |
 | Everyone board | 5 rows with display names only; the protocol still has `board(kind: .everyone, ...)` but no view calls it since the revised boards dropped the Everyone board |
 | Circles | `Family` code `ABC123`, owner `u-mum`, members mum/me |
 | Reactions | Sam → me 🔥 in `played` |
 | Match response | matches for hashes the test sends: map the first three hashes to Mum/Sam/Dev |
 | Streak | 12 |
 | Results history | 20 days ending yesterday, tries 1/2/3 cycling, for the heatmap |
+
+Submitting a grid game (Stars/Duo/Trail/Quint) bumps `streakValue` by one, same as
+`submitResult` for Lineup — this happens on every call to the fake's grid-game submit path,
+including a give-up, since a gave-up day still counts as played (finding B6). A test that
+gives up on a grid game in the `returning` state therefore sees `gameResults.score` read
+"13", not the seeded "12".
 
 Behaviour: `submitResult` recomputes tries/solved/score from the attempts using
 `LineupEngine.Scoring` and stores the result; a second call the same day throws
@@ -49,6 +55,17 @@ next `submitResult` throw `KithError.network("offline")`. `setTaunt` is write-on
 `react` upserts; `unreact` removes. `joinCircle("KITH-ABC123")` and `("ABC123")` both succeed
 and add a chip; unknown codes throw `KithError.api(404, "no_circle")`. `deleteAccount` clears
 everything. `reveal` returns the five items with values and facts.
+
+`board(...)`'s `date` argument is not folded into `calls` (other tests already match that
+string exactly), but is tracked separately: `boardDates: [String]` records every `date` a
+`board()` call carried, in order — a test drives the board's Today/Yesterday toggle (docs/07
+"Boards (revised 2026-09-13)", "Added later the same day") and asserts on this rather than
+`calls`. `uploadAvatar(jpeg:currentVersion:)` (migration 0009 / docs/07 "Profile
+(2026-09-13)") records the byte count in `avatarUploadSizes: [Int]`, sets
+`profileSeed.avatar_version` to `currentVersion + 1`, and returns that version — same
+contract as `SupabaseKithAPI.uploadAvatar`, minus the network. `updateProfile` also applies
+`patch.avatar_version` when present, for symmetry with the real client's own
+`uploadAvatar` (which patches through `updateProfile`).
 
 States (`-uiTestingState`): `fresh` (signed out; onboarding starts at phone),
 `returning` (signed in, registered, today unplayed), `played` (today already played, score 520).
@@ -65,10 +82,26 @@ reflects sign-in state.
 | Onboarding | `onboarding.phone.field`, `onboarding.phone.continue`, `onboarding.code.field`, `onboarding.code.resend`, `onboarding.name.field`, `onboarding.name.continue`, `onboarding.contacts.allow`, `onboarding.contacts.notNow`, `onboarding.friends.seeBoard`, `onboarding.friends.invite`, `onboarding.friends.createCircle`, `onboarding.notifications.yes`, `onboarding.notifications.no` |
 | Today | `today.prompt`, `today.tile.<i>` (i = 0…4; accessibility label = the item label), `today.tile.<i>.up`, `today.tile.<i>.down`, `today.lockIn`, `today.timer`, `today.tries`, `today.countdown`, `today.playedCard` |
 | Results | `results.headline`, `results.score`, `results.time`, `results.share`, `results.copy`, `results.taunt.field`, `results.rankTeaser`, `results.showFacts` |
-| Board | `board.kind` (Picker), `board.header`, `board.row.<userId>`, `board.empty.invite`, `board.empty.createCircle` |
+| Board | `board.kind` (Picker), `board.day` (Picker: "Today" / "Yesterday" segments, docs/07 "Added later the same day"), `board.header`, `board.row.<userId>`, `board.empty.invite`, `board.empty.createCircle` |
 | Circles | `circles.new`, `circles.join`, `circles.join.field`, `circles.join.submit`, `circles.chip.<code>` |
-| Profile | `profile.streak`, `profile.heatmap`, `profile.inviteCode`, `profile.discoverable`, `profile.deleteAccount`, `profile.deleteConfirm` |
+| Profile | `profile.name`, `profile.streak`, `profile.heatmap`, `profile.inviteCode`, `profile.discoverable`, `profile.deleteAccount`, `profile.deleteConfirm`, `profile.edit` (opens `EditProfileView`), `profile.edit.name` (field), `profile.edit.save`, `profile.edit.photo` (`PhotosPicker`, docs/07 "Profile (2026-09-13)") |
 | Global | `banner.configMissing`, `toast` |
+
+Board rows (docs/07 "Boards (revised 2026-09-13)", "Added later the same day"):
+`BoardRowView` shows a 🔥 `n` streak pill next to the time (`row.streak`, hidden when
+nil/0; accessibility label includes "streak n") and, when `row.avatar_version` is set,
+the member's picture instead of initials (`AvatarView`'s `url:`). The row's secondary
+caption reads "yesterday 1:12" on the Today toggle and **"day before 1:12"** on the
+Yesterday toggle (`AppModel.secondaryLabel(for:prefix:)`) — the same `prev_*` fields, just
+describing the day before whichever date is selected; `board.header`'s date follows the
+toggle too ("Friends · Wednesday, Sep 10" while Yesterday is selected, say).
+
+`AppModel.react`/`unreact` always target `today`, so a reaction sent from the Yesterday
+board would silently land on the wrong day. Rather than threading a date through `react`,
+`BoardRowView` rows are simply not tappable/reactable while the Yesterday toggle is
+selected (`reactable: selectedDay == .today` in `BoardView`, finding C7) — neither the
+smiling-face button nor the row's own tap gesture calls `onReact()`, so the reaction sheet
+never opens on that toggle.
 
 Games hub (`apps/ios/PLAN-games.md`, docs/07). The Today tab is `HubView`; the Lineup
 identifiers above now live on the screen it pushes.
@@ -76,10 +109,10 @@ identifiers above now live on the screen it pushes.
 | Screen | Identifiers |
 |---|---|
 | Hub | `hub.row.lineup`, `hub.row.stars`, `hub.row.duo`, `hub.row.trail`, `hub.row.quint`, `hub.streak`, `hub.countdown` |
-| Game host | `game.timer`, `game.giveUp`, `game.giveUp.confirm`, `game.reset` (not shown for Quint — a guess cannot be undone), `game.done`, `game.retry` (a failed `startGame`'s "Try again"), `game.showResult` (on an already-played game's card, reopens `GameResultsView`) |
+| Game host | `game.timer`, `game.giveUp`, `game.giveUp.confirm`, `game.reset` (not shown for Quint — a guess cannot be undone), `game.retry` (a failed `startGame`'s "Try again"), `game.showResult` (on an already-played game's card, reopens `GameResultsView`) |
 | Grids | `stars.cell.<r>.<c>`, `duo.cell.<r>.<c>`, `trail.cell.<r>.<c>` (accessibility label "row r column c, <state>") |
 | Quint | `quint.tile.<r>.<c>` (accessibility label "row r letter c, <LETTER>, <hit\|near\|miss>"), `quint.key.<letter>`, `quint.key.enter`, `quint.key.backspace` |
-| Game results | `gameResults.headline`, `gameResults.time`, `gameResults.score`, `gameResults.share` |
+| Game results | `gameResults.headline`, `gameResults.time`, `gameResults.score`, `gameResults.share`, `gameResults.answer` (Quint fail/give-up only — the revealed word), `gameResults.rankTeaser` (only when `AppModel.gameRankTeaser(for:)` has one) |
 | Board | `board.section.<slug>` — one per row of the expandable list, `<slug>` a `BoardGame` raw value: `total` ("All games", expanded by default), `lineup`, `stars`, `duo`, `trail`, `quint` (collapsed by default; tapping toggles and, the first time, loads that game's rows) |
 
 `<r>` and `<c>` in the grid identifiers are the engine's **0-based** coordinates, matching
@@ -107,7 +140,8 @@ a known order:
   waypoint 1, `(0,0)`, so a test only taps the remaining eight cells in that order.
 - **Quint** answer `"crane"`, puzzle number 3. A test types `slate` (a real word, wrong)
   then `crane` via `quint.key.<letter>` and `quint.key.enter`; the second, solving guess
-  submits on its own (no `game.done` tap) and lands on the results screen.
+  submits on its own and lands on the results screen. Stars, Duo and Trail do the same the
+  moment their engine reports the grid complete (docs/08 §Auto-complete): there is no Done button.
 
 `dailyGames` returns all four every day; `submitGame` records the call (`gameSubmissions`)
 and scores with `GameScoring.score` (`GameScoring.quintScore` for Quint, which also
@@ -144,6 +178,13 @@ Use `AppModel(auth: FakeAuth(), api: FakeKithAPI(state:), store: FileStore(direc
 13. `testTauntIsWriteOnce` → `saveTaunt("gg")` twice → second is a no-op, `tauntSaved == true`.
 14. `testMidnightFlipReloadsPuzzle` → set `today` to yesterday, call the midnight handler → `today` is the current date and a new `startPuzzle` call was made.
 
+`ProfileEditTests.swift` (docs/07 "Profile (2026-09-13)" and the board's Today/Yesterday
+toggle):
+15. `testUpdateProfileRenamesDisplayNameAndRecordsCall` → `updateProfile(ProfilePatch(display_name:))` → `profile?.display_name` updated, `api.calls` has an `updateProfile(display_name:...)` entry.
+16. `testUploadAvatarBumpsVersionAndRecordsByteCount` → `uploadAvatar(jpeg:)` → `profile?.avatar_version` is `before + 1`, `api.avatarUploadSizes.last` is the JPEG's byte count.
+17. `testAvatarURLIsNilForTheFake` → after an upload, `avatarURL(userId:version:)` is still nil (the fakes have nothing to serve).
+18. `testRefreshBoardKeysRowsByDateAndPassesDateToFake` → `refreshBoard(date: model.yesterday, force: true)` → `boards[BoardCacheKey(..., date: model.yesterday)]` is populated separately from today's, and `api.boardDates` contains `model.yesterday`.
+
 Method names above are the intent; match whatever `AppModel` actually exposes and add small
 `internal` hooks only where needed (e.g. `func applyMidnight()`).
 
@@ -158,6 +199,8 @@ Method names above are the intent; match whatever `AppModel` actually exposes an
 5. `testJoinCircleByCode` (`returning`): `tab.circles` → `circles.join` → type `KITH-ABC123` → `circles.join.submit` → `circles.chip.ABC123` exists.
 6. `testProfileShowsStreak` (`played`): `tab.you` → `profile.streak` label contains `12`, `profile.inviteCode` label contains `KITH7F3Q`.
 7. `testBoardSectionsExpand` (`played`): `tab.board` → `board.section.total` ("All games") is expanded by default with rows already visible → tap `board.section.stars` → `board.row.*` rows appear under it.
+8. `testEditDisplayName` (`played`): `tab.you` → tap `profile.edit` → clear and type into `profile.edit.name` → tap `profile.edit.save` → `profile.name`'s label contains the new name.
+9. `testBoardDayToggle` (`played`): `tab.board` → tap the `board.day` "Yesterday" segment → `board.header`'s label changes (it now reads yesterday's date, docs/07 "Added later the same day").
 
 ## 6. CI
 

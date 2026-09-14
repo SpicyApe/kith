@@ -15,6 +15,8 @@ struct BoardView: View {
     @Environment(AppModel.self) private var model
 
     @State private var kind: BoardKind = .friends
+    /// Today / Yesterday toggle (docs/07 "Added later the same day"), identifier `board.day`.
+    @State private var selectedDay: BoardDay = .today
     @State private var expanded: Set<BoardGame> = [.total]
     @State private var reactingTo: String?
 
@@ -24,6 +26,18 @@ struct BoardView: View {
 
     private var scopeId: String? {
         kind == .circle ? model.selectedCircleId : nil
+    }
+
+    /// The date the toggle currently selects: `model.today` or `model.yesterday`.
+    private var selectedDate: String {
+        selectedDay == .today ? model.today : model.yesterday
+    }
+
+    /// The secondary-caption prefix for each row's `prev_*` figure. On Today that figure
+    /// is yesterday's; on Yesterday it is the day *before* yesterday's (docs/07 "Added
+    /// later the same day").
+    private var secondaryPrefix: String {
+        selectedDay == .today ? "yesterday" : "day before"
     }
 
     var body: some View {
@@ -37,6 +51,14 @@ struct BoardView: View {
                     .pickerStyle(.segmented)
                     .accessibilityLabel("Which board")
                     .accessibilityIdentifier("board.kind")
+
+                    Picker("Day", selection: $selectedDay) {
+                        Text("Today").tag(BoardDay.today)
+                        Text("Yesterday").tag(BoardDay.yesterday)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel("Which day")
+                    .accessibilityIdentifier("board.day")
 
                     if kind == .circle {
                         circleChips
@@ -63,12 +85,13 @@ struct BoardView: View {
     }
 
     private var reloadKey: String {
-        "\(kind.rawValue)|\(scopeId ?? "")|\(model.today)"
+        "\(kind.rawValue)|\(scopeId ?? "")|\(selectedDay.rawValue)|\(model.today)"
     }
 
     /// Loads the circle list (if needed) and every currently-expanded section. Called on
-    /// appear/kind-change and by pull-to-refresh; expanding a new section loads just that
-    /// one (`ensureLoaded`).
+    /// appear/kind-change/day-change and by pull-to-refresh; expanding a new section loads
+    /// just that one (`ensureLoaded`). Switching the day reloads every already-expanded
+    /// section for the newly-selected date (docs/07 "Added later the same day").
     private func reload(force: Bool) async {
         if kind == .circle, model.circles.isEmpty {
             await model.loadCircles()
@@ -78,7 +101,7 @@ struct BoardView: View {
         // (`refreshBoard(includeSocial:)`, finding C1).
         for game in expanded {
             await model.refreshBoard(kind: kind, scopeId: scopeId, period: .today,
-                                     game: game, force: force, includeSocial: false)
+                                     date: selectedDate, game: game, force: force, includeSocial: false)
         }
         await model.refreshSocial()
     }
@@ -96,11 +119,12 @@ struct BoardView: View {
     private func ensureLoaded(_ game: BoardGame) async {
         let key = boardKey(for: game)
         if model.boards[key] != nil { return }
-        await model.refreshBoard(kind: kind, scopeId: scopeId, period: .today, game: game)
+        await model.refreshBoard(kind: kind, scopeId: scopeId, period: .today,
+                                 date: selectedDate, game: game)
     }
 
     private func boardKey(for game: BoardGame) -> BoardCacheKey {
-        BoardCacheKey(kind: kind, scopeId: scopeId, period: .today, date: model.today, game: game)
+        BoardCacheKey(kind: kind, scopeId: scopeId, period: .today, date: selectedDate, game: game)
     }
 
     private func rawRows(for game: BoardGame) -> [BoardRow] {
@@ -157,7 +181,7 @@ struct BoardView: View {
         case .everyone:
             name = "Friends"
         }
-        return "\(name) · \(AppModel.headerDate(model.today))"
+        return "\(name) · \(AppModel.headerDate(selectedDate))"
     }
 
     private var circleChips: some View {
@@ -326,7 +350,14 @@ struct BoardView: View {
                         game: game,
                         isMe: row.row.user_id == model.myUserId,
                         name: displayName(for: row.row),
-                        movement: movement(rank: row.rank, prevRank: yesterdayRank[row.row.user_id] ?? nil)
+                        movement: movement(rank: row.rank, prevRank: yesterdayRank[row.row.user_id] ?? nil),
+                        secondaryPrefix: secondaryPrefix,
+                        avatarURL: model.avatarURL(userId: row.row.user_id, version: row.row.avatar_version),
+                        // `AppModel.react` always reacts for `today` (finding C7) — rather
+                        // than threading a date through it, the Yesterday board simply
+                        // makes its rows non-reactable, so the sheet never opens for a day
+                        // the reaction wouldn't actually apply to.
+                        reactable: selectedDay == .today
                     ) {
                         reactingTo = row.row.user_id
                     }
@@ -360,7 +391,7 @@ struct BoardView: View {
             Button("Try again") {
                 Task {
                     await model.refreshBoard(kind: kind, scopeId: scopeId, period: .today,
-                                             game: game, force: true)
+                                             date: selectedDate, game: game, force: true)
                 }
             }
             .buttonStyle(SecondaryButtonStyle())
@@ -465,6 +496,15 @@ struct BoardRowView: View {
     let isMe: Bool
     let name: String
     let movement: RankMovement
+    /// "yesterday" on the Today toggle, "day before" on the Yesterday toggle (docs/07
+    /// "Added later the same day").
+    var secondaryPrefix: String = "yesterday"
+    /// `AppModel.avatarURL(userId:version:)`; nil shows initials.
+    var avatarURL: URL? = nil
+    /// False on the Yesterday board (finding C7): `AppModel.react` always reacts for
+    /// today's date, so a row viewed under the Yesterday toggle can't offer a reaction
+    /// that would actually land on the day being looked at.
+    var reactable: Bool = true
     let onReact: () -> Void
 
     // Findings C5: rank column and avatar scale with Dynamic Type instead of staying
@@ -483,19 +523,27 @@ struct BoardRowView: View {
 
             MovementChip(movement: movement)
 
-            AvatarView(name: name, size: avatarSize, highlighted: isMe)
+            AvatarView(name: name, size: avatarSize, highlighted: isMe, url: avatarURL)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
                     .font(.body.weight(isMe ? .semibold : .regular))
                     .lineLimit(1)
 
-                Text(AppModel.yesterdayLabel(for: row))
+                Text(AppModel.secondaryLabel(for: row, prefix: secondaryPrefix))
                     .font(.system(.caption, design: .rounded).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 8)
+
+            // docs/07 "Added later the same day": every row's streak, hidden when nil/0.
+            if let streak = row.streak, streak > 0 {
+                Text("🔥 \(streak)")
+                    .font(.system(.caption, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("streak \(streak)")
+            }
 
             // Findings C8: a gave-up/failed row (`attempted`) reads as a dimmer, distinct
             // shade from a solved one, rather than styling every row identically.
@@ -503,7 +551,7 @@ struct BoardRowView: View {
                 .font(.system(.subheadline, design: .rounded).monospacedDigit())
                 .foregroundStyle(ranked.attempted ? .tertiary : .secondary)
 
-            if !isMe, ranked.rank != nil {
+            if !isMe, ranked.rank != nil, reactable {
                 Button {
                     onReact()
                 } label: {
@@ -529,7 +577,7 @@ struct BoardRowView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture {
-            if !isMe, ranked.rank != nil { onReact() }
+            if !isMe, ranked.rank != nil, reactable { onReact() }
         }
         // `.contain` rather than `.combine`: the row keeps its own summary label, and the
         // name inside it (notably "You") stays an addressable static text for UI tests.
@@ -543,7 +591,8 @@ struct BoardRowView: View {
         if let rank = ranked.rank { parts.append("rank \(rank)") }
         parts.append(name)
         parts.append(AppModel.timeLabel(for: row, game: game))
-        parts.append(AppModel.yesterdayLabel(for: row))
+        parts.append(AppModel.secondaryLabel(for: row, prefix: secondaryPrefix))
+        if let streak = row.streak, streak > 0 { parts.append("streak \(streak)") }
         return parts.joined(separator: ", ")
     }
 }

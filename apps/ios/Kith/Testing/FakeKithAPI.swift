@@ -115,6 +115,10 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         var prev_elapsed_ms: Int? = nil
         var prev_solved_count: Int? = nil
         var prev_played_count: Int? = nil
+        // Migration 0009 (docs/07 "Boards (revised 2026-09-13)", "Added later the same
+        // day"): the streak pill and the avatar picture.
+        var streak: Int? = nil
+        var avatar_version: Int? = nil
     }
 
     private struct CircleSeed: Encodable {
@@ -147,6 +151,8 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         var push_daily_at: String
         var push_streak: Bool
         var push_passed: Bool
+        /// Migration 0009; bumped by `uploadAvatar`.
+        var avatar_version: Int? = nil
     }
 
     private struct StoredSeed: Encodable {
@@ -219,6 +225,10 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
 
     private let state: State
     private var recordedCalls: [String] = []
+    /// Every `date` a `board()` call was made with, in order — see `board(...)`'s comment.
+    private var recordedBoardDates: [String] = []
+    /// Every JPEG byte count `uploadAvatar` was called with, in order.
+    private var recordedAvatarUploadSizes: [Int] = []
     private var shouldFailNextSubmit = false
 
     private var registered: Bool
@@ -302,6 +312,21 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return recordedCalls
+    }
+
+    /// Every `date` a `board()` call carried, in order (docs/07 "Added later the same
+    /// day": the board's Today/Yesterday toggle drives this).
+    var boardDates: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedBoardDates
+    }
+
+    /// Every JPEG byte count `uploadAvatar` was called with, in order.
+    var avatarUploadSizes: [Int] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedAvatarUploadSizes
     }
 
     /// Makes the next `submitResult` throw `KithError.network("offline")`, once.
@@ -435,6 +460,11 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         recordedCalls.append("board(\(kind.rawValue),\(period.rawValue),\(game.rawValue))")
+        // `date` is tracked separately (not folded into `calls`, whose exact-match format
+        // other tests already depend on) so a test can tell a Yesterday-toggle reload
+        // (docs/07 "Added later the same day") apart from Today's — `refreshBoard(date:)`
+        // passes `model.yesterday` there.
+        recordedBoardDates.append(date)
         switch kind {
         case .friends:
             return try Self.convert(friendRowSeeds(game: game, on: date), to: [BoardRow].self)
@@ -508,6 +538,20 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         if let value = patch.push_daily_at { profileSeed.push_daily_at = value }
         if let value = patch.push_streak { profileSeed.push_streak = value }
         if let value = patch.push_passed { profileSeed.push_passed = value }
+        if let value = patch.avatar_version { profileSeed.avatar_version = value }
+    }
+
+    /// Migration 0009 (docs/07 "Profile (2026-09-13)"): records the byte count so a test
+    /// can assert what `EditProfileView` handed over, and returns `currentVersion + 1` —
+    /// same contract as `SupabaseKithAPI.uploadAvatar`, minus the network.
+    func uploadAvatar(jpeg: Data, currentVersion: Int) async throws -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        recordedCalls.append("uploadAvatar(\(jpeg.count))")
+        recordedAvatarUploadSizes.append(jpeg.count)
+        let version = currentVersion + 1
+        profileSeed.avatar_version = version
+        return version
     }
 
     func myCircles() async throws -> [Circle] {
@@ -944,30 +988,35 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
                     played: true, rank: 1, prev_rank: 3,
                     solved_count: 1, played_count: 1,
                     prev_played: true, prev_elapsed_ms: 70_000,
-                    prev_solved_count: 1, prev_played_count: 1),
+                    prev_solved_count: 1, prev_played_count: 1,
+                    streak: Self.streak(for: "u-mum"), avatar_version: Self.avatarVersion(for: "u-mum")),
             RowSeed(user_id: "u-sam", display_name: "Sam", score: 610, tries: 2, elapsed_ms: 45_000,
                     attempts: Self.solvedAttempts(tries: 2, elapsedMs: 45_000),
                     played: true, rank: 2, prev_rank: 1,
                     solved_count: 1, played_count: 1,
                     prev_played: true, prev_elapsed_ms: 26_000,
-                    prev_solved_count: 1, prev_played_count: 1),
+                    prev_solved_count: 1, prev_played_count: 1,
+                    streak: Self.streak(for: "u-sam"), avatar_version: Self.avatarVersion(for: "u-sam")),
             RowSeed(user_id: "u-dev", display_name: "Dev", score: 160, tries: 3, elapsed_ms: 120_000,
                     attempts: Self.solvedAttempts(tries: 3, elapsedMs: 120_000),
                     played: true, rank: 3, prev_rank: nil,
                     solved_count: 1, played_count: 1,
                     prev_played: false, prev_elapsed_ms: nil,
-                    prev_solved_count: 0, prev_played_count: 0),
+                    prev_solved_count: 0, prev_played_count: 0,
+                    streak: Self.streak(for: "u-dev"), avatar_version: Self.avatarVersion(for: "u-dev")),
             RowSeed(user_id: "u-jo", display_name: "Jo", score: 0, tries: nil, elapsed_ms: nil,
                     attempts: nil, played: false, rank: nil, prev_rank: nil,
                     solved_count: 0, played_count: 0,
                     prev_played: false, prev_elapsed_ms: nil,
-                    prev_solved_count: 0, prev_played_count: 0),
+                    prev_solved_count: 0, prev_played_count: 0,
+                    streak: Self.streak(for: "u-jo"), avatar_version: Self.avatarVersion(for: "u-jo")),
             RowSeed(user_id: Self.meId, display_name: Self.meName, score: stored?.score ?? 0,
                     tries: stored?.tries, elapsed_ms: stored?.elapsedMs, attempts: stored?.attempts,
                     played: stored != nil, rank: stored == nil ? nil : 3, prev_rank: nil,
                     solved_count: stored != nil ? 1 : 0, played_count: stored != nil ? 1 : 0,
                     prev_played: false, prev_elapsed_ms: nil,
-                    prev_solved_count: 0, prev_played_count: 0),
+                    prev_solved_count: 0, prev_played_count: 0,
+                    streak: Self.streak(for: Self.meId), avatar_version: Self.avatarVersion(for: Self.meId)),
         ]
         // The server returns played rows first, by score descending; the client re-ranks
         // every section from `elapsed_ms`/`solved_count` regardless (docs/07), so this
@@ -989,25 +1038,30 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
             RowSeed(user_id: "u-mum", display_name: "Mum", score: 100, elapsed_ms: todayMum,
                     played: true, solved_count: 1, played_count: 1,
                     prev_played: true, prev_elapsed_ms: prevMum,
-                    prev_solved_count: 1, prev_played_count: 1),
+                    prev_solved_count: 1, prev_played_count: 1,
+                    streak: Self.streak(for: "u-mum"), avatar_version: Self.avatarVersion(for: "u-mum")),
             RowSeed(user_id: "u-sam", display_name: "Sam", score: 90, elapsed_ms: todaySam,
                     played: true, solved_count: 1, played_count: 1,
                     prev_played: true, prev_elapsed_ms: prevSam,
-                    prev_solved_count: 1, prev_played_count: 1),
+                    prev_solved_count: 1, prev_played_count: 1,
+                    streak: Self.streak(for: "u-sam"), avatar_version: Self.avatarVersion(for: "u-sam")),
             RowSeed(user_id: "u-dev", display_name: "Dev", score: 10, elapsed_ms: todayDev,
                     played: true, solved_count: 0, played_count: 1,
                     prev_played: prevDev != nil, prev_elapsed_ms: prevDev,
-                    prev_solved_count: prevDev != nil ? 1 : 0, prev_played_count: prevDev != nil ? 1 : 0),
+                    prev_solved_count: prevDev != nil ? 1 : 0, prev_played_count: prevDev != nil ? 1 : 0,
+                    streak: Self.streak(for: "u-dev"), avatar_version: Self.avatarVersion(for: "u-dev")),
             RowSeed(user_id: "u-jo", display_name: "Jo", score: 0,
                     played: false, solved_count: 0, played_count: 0,
                     prev_played: false, prev_elapsed_ms: nil,
-                    prev_solved_count: 0, prev_played_count: 0),
+                    prev_solved_count: 0, prev_played_count: 0,
+                    streak: Self.streak(for: "u-jo"), avatar_version: Self.avatarVersion(for: "u-jo")),
             // The fake has no per-grid-game "my" data, so I show up unplayed here even in
             // the `played` app state (unlike Lineup, whose row reflects `storedResults`).
             RowSeed(user_id: Self.meId, display_name: Self.meName, score: 0,
                     played: false, solved_count: 0, played_count: 0,
                     prev_played: false, prev_elapsed_ms: nil,
-                    prev_solved_count: 0, prev_played_count: 0),
+                    prev_solved_count: 0, prev_played_count: 0,
+                    streak: Self.streak(for: Self.meId), avatar_version: Self.avatarVersion(for: Self.meId)),
         ]
     }
 
@@ -1073,7 +1127,8 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
                            elapsed_ms: hasElapsed ? elapsed : nil,
                            played: played > 0, solved_count: solved, played_count: played,
                            prev_played: prevPlayed > 0, prev_elapsed_ms: hasPrevElapsed ? prevElapsed : nil,
-                           prev_solved_count: prevSolved, prev_played_count: prevPlayed)
+                           prev_solved_count: prevSolved, prev_played_count: prevPlayed,
+                           streak: Self.streak(for: userId), avatar_version: Self.avatarVersion(for: userId))
         }
         return rows.filter(\.played).sorted { $0.score > $1.score } + rows.filter { !$0.played }
     }
@@ -1110,6 +1165,24 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         return attempts
     }
 
+    /// Fixed per-person streak (docs/07 "Added later the same day"), same across every
+    /// board section; nil (hidden pill) for anyone who has never played.
+    private static func streak(for userId: String) -> Int? {
+        switch userId {
+        case "u-mum": return 30
+        case "u-sam": return 5
+        case "u-dev": return 2
+        default: return nil
+        }
+    }
+
+    /// Only Mum has a picture (`avatarURL` returns nil for the fake regardless, so this
+    /// only exercises `AvatarView`'s own placeholder path in unit tests, never a network
+    /// image) — everyone else is `0`, i.e. initials.
+    private static func avatarVersion(for userId: String) -> Int {
+        userId == "u-mum" ? 2 : 0
+    }
+
     /// "KITH-abc123", "kith-ABC123" and "ABC123" all name the same circle.
     private static func normalize(_ raw: String) -> String {
         var value = raw.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
@@ -1129,6 +1202,7 @@ final class FakeKithAPI: KithAPI, @unchecked Sendable {
         if let value = patch.push_daily_at { parts.append("push_daily_at:\(value)") }
         if let value = patch.push_streak { parts.append("push_streak:\(value)") }
         if let value = patch.push_passed { parts.append("push_passed:\(value)") }
+        if let value = patch.avatar_version { parts.append("avatar_version:\(value)") }
         return parts.joined(separator: ",")
     }
 

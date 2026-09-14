@@ -177,4 +177,49 @@ import XCTest
         scrollUntilExists(mumStars)
         awaitElement(mumStars, "No board row showed Mum's Stars time (0:40) after expanding Stars")
     }
+
+    // MARK: - 8. Editing the display name
+
+    /// docs/07 "Profile (2026-09-13)": the pencil button opens `EditProfileView`; typing a
+    /// new name and tapping Save updates the profile header (`profile.name`).
+    func testEditDisplayName() {
+        launch(state: "played")
+
+        tapTab("tab.you")
+        awaitAndTap(app.buttons["profile.edit"])
+
+        let nameField = textField("profile.edit.name")
+        awaitAndTap(nameField)
+        // Clear whatever the field starts with ("Alex", TESTING.md §2) before typing the
+        // new name; a few extra deletes cover the cursor not landing exactly at the end.
+        if let current = nameField.value as? String, !current.isEmpty {
+            nameField.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count + 8))
+        }
+        nameField.typeText("Alexandra")
+
+        awaitAndTap(app.buttons["profile.edit.save"])
+
+        assertLabelContains(element("profile.name"), "Alexandra")
+    }
+
+    // MARK: - 9. Board Today / Yesterday toggle
+
+    /// docs/07 "Boards (revised 2026-09-13)", "Added later the same day": `board.day`
+    /// switches the board's date; `board.header` reflects whichever date is selected.
+    func testBoardDayToggle() {
+        launch(state: "played")
+
+        tapTab("tab.board")
+
+        let header = awaitElement(element("board.header"), "board.header never appeared")
+        let todayLabel = header.label
+
+        awaitAndTap(app.buttons["Yesterday"], "The board.day Yesterday segment never appeared")
+
+        let changed = expectation(for: NSPredicate(format: "label != %@", todayLabel),
+                                  evaluatedWith: header, handler: nil)
+        wait(for: [changed], timeout: KithUITestCase.timeout)
+        XCTAssertNotEqual(header.label, todayLabel,
+                          "board.header should read a different date once Yesterday is selected")
+    }
 }
